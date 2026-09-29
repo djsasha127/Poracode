@@ -94,6 +94,88 @@ describe("CodexUsageHistoryIndex", () => {
     ).toBe("22222222-2222-4222-8222-222222222222");
   });
 
+  it("counts fork replay history once while retaining the child session usage", async () => {
+    const root = await tempRoot();
+    const home = join(root, "home");
+    const indexPath = join(root, "state", "history.json");
+    const parentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const childId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const parentUsage = {
+      type: "token_usage_record",
+      payload: {
+        response_id: "parent-response",
+        usage: { input_tokens: 100, output_tokens: 10 },
+      },
+    };
+    await writeRollout(
+      home,
+      "sessions",
+      "2026-08-12",
+      parentId,
+      [
+        JSON.stringify({
+          timestamp: "2026-08-12T09:00:00.000Z",
+          type: "session_meta",
+          payload: { id: parentId },
+        }),
+        JSON.stringify({
+          timestamp: "2026-08-12T09:00:00.100Z",
+          type: "turn_context",
+          payload: { model: "gpt-5.5", effort: "high" },
+        }),
+        JSON.stringify({ timestamp: "2026-08-12T09:00:00.200Z", ...parentUsage }),
+      ].join("\n"),
+    );
+    await writeRollout(
+      home,
+      "sessions",
+      "2026-08-12",
+      childId,
+      [
+        JSON.stringify({
+          timestamp: "2026-08-12T10:00:00.000Z",
+          type: "session_meta",
+          payload: { id: childId, forked_from_id: parentId },
+        }),
+        JSON.stringify({
+          timestamp: "2026-08-12T10:00:00.100Z",
+          type: "turn_context",
+          payload: { model: "gpt-5.5", effort: "high" },
+        }),
+        JSON.stringify({ timestamp: "2026-08-12T10:00:00.200Z", ...parentUsage }),
+        JSON.stringify({
+          timestamp: "2026-08-12T10:00:02.000Z",
+          type: "turn_context",
+          payload: { model: "gpt-5.5", effort: "xhigh" },
+        }),
+        JSON.stringify({
+          timestamp: "2026-08-12T10:00:02.100Z",
+          type: "token_usage_record",
+          payload: {
+            response_id: "child-response",
+            usage: { input_tokens: 20, output_tokens: 5 },
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const index = new CodexUsageHistoryIndex({
+      indexPath,
+      codexHome: home,
+      machine: "test-mac",
+      now: () => NOW,
+      readAdditionalSources: () => [],
+    });
+    const digest = await index.refresh({ providerId: "codex" });
+
+    expect(digest.uniqueSessions).toBe(2);
+    expect(index.getCachedAggregate()?.tokens).toMatchObject({
+      total: 135,
+      input: 120,
+      output: 15,
+    });
+  });
+
   it("indexes sessions, archived_sessions, and multiple roots with deterministic dedup", async () => {
     const root = await tempRoot();
     const home = join(root, "home");

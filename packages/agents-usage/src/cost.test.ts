@@ -156,6 +156,75 @@ describe("aggregateCodexCost", () => {
     expect(estimate?.topModel).toBe("gpt-5.3-codex");
   });
 
+  it("does not count the replayed parent history at the start of a fork rollout", () => {
+    const parentUsage = line({
+      timestamp: "2026-05-28T12:00:00.100Z",
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          last_token_usage: { input_tokens: 100, output_tokens: 10 },
+          total_token_usage: { input_tokens: 100, output_tokens: 10 },
+        },
+      },
+    });
+    const child = [
+      line({
+        timestamp: "2026-05-28T13:00:00.000Z",
+        type: "session_meta",
+        payload: { id: "child", forked_from_id: "parent" },
+      }),
+      line({
+        timestamp: "2026-05-28T13:00:00.001Z",
+        type: "turn_context",
+        payload: { model: "gpt-5.3-codex", effort: "high" },
+      }),
+      line({
+        timestamp: "2026-05-28T13:00:00.200Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            last_token_usage: { input_tokens: 100, output_tokens: 10 },
+            total_token_usage: { input_tokens: 100, output_tokens: 10 },
+          },
+        },
+      }),
+      line({
+        timestamp: "2026-05-28T13:00:02.000Z",
+        type: "turn_context",
+        payload: { model: "gpt-5.3-codex", effort: "xhigh" },
+      }),
+      line({
+        timestamp: "2026-05-28T13:00:02.100Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            last_token_usage: { input_tokens: 20, output_tokens: 5 },
+            total_token_usage: { input_tokens: 120, output_tokens: 15 },
+          },
+        },
+      }),
+    ].join("\n");
+
+    const estimate = aggregateCodexCost([parentUsage, child], {
+      sinceMs: SINCE,
+      historySinceMs: 0,
+      nowMs: NOW,
+    });
+
+    expect(estimate?.tokens).toMatchObject({ total: 135, input: 120, output: 15 });
+    expect(estimate?.history?.months[0]?.models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          effort: "xhigh",
+          tokens: expect.objectContaining({ total: 25 }),
+        }),
+      ]),
+    );
+  });
+
   it("groups Codex history by model and effort and records reasoning output", () => {
     const estimate = aggregateCodexCost(
       [

@@ -27,6 +27,8 @@ interface CodexLogLine {
   type?: string;
   payload?: {
     type?: string;
+    forked_from_id?: string;
+    parent_thread_id?: string;
     model?: string;
     effort?: string;
     thread_settings?: { model?: string; reasoning_effort?: string; effort?: string };
@@ -387,6 +389,16 @@ function createCodexCostParser(opts: { sinceMs: number; nowMs: number; historySi
   let currentEffort: string | undefined;
   let legacySamples: UsageCostSample[] = [];
   let earliestNativeRecordMs: number | undefined;
+  let forkReplayActive = false;
+  let forkReplayLastTimestampMs: number | undefined;
+
+  // Codex fork rollouts begin with a replay of the parent's completed history.
+  // Replayed records are written in one tight timestamp burst before the child
+  // starts doing work. Counting that burst makes every helper/fork bill the
+  // parent's usage again. A one-second inter-record gap cleanly separates the
+  // replay stream from the first live child event while allowing large replays
+  // to take as long as needed to serialize.
+  const FORK_REPLAY_MAX_INTER_RECORD_GAP_MS = 1_000;
 
   const applyCurrentContextToPendingLegacySamples = (): void => {
     if (!currentModel && !currentEffort) return;
@@ -416,6 +428,8 @@ function createCodexCostParser(opts: { sinceMs: number; nowMs: number; historySi
       flushLegacySamples();
       currentModel = undefined;
       currentEffort = undefined;
+      forkReplayActive = false;
+      forkReplayLastTimestampMs = undefined;
     },
     addLine(rawLine: string): void {
       const line = rawLine.trim();
@@ -425,6 +439,34 @@ function createCodexCostParser(opts: { sinceMs: number; nowMs: number; historySi
         parsed = JSON.parse(line) as CodexLogLine;
       } catch {
         return;
+      }
+      const timestamp = parsed.timestamp ? Date.parse(parsed.timestamp) : Number.NaN;
+      const parsedTimestampMs = Number.isFinite(timestamp) ? timestamp : undefined;
+      if (
+        parsed.type === "session_meta" &&
+        stringValue(parsed.payload?.forked_from_id ?? parsed.payload?.parent_thread_id)
+      ) {
+        forkReplayActive = true;
+        forkReplayLastTimestampMs = parsedTimestampMs;
+        return;
+      }
+      if (forkReplayActive && parsedTimestampMs !== undefined) {
+        const previous = forkReplayLastTimestampMs;
+        if (
+          previous === undefined ||
+          parsedTimestampMs <= previous + FORK_REPLAY_MAX_INTER_RECORD_GAP_MS
+        ) {
+          forkReplayLastTimestampMs = Math.max(previous ?? -Infinity, parsedTimestampMs);
+          if (
+            (parsed.type === "event_msg" && parsed.payload?.type === "token_count") ||
+            parsed.type === "token_usage_record"
+          ) {
+            return;
+          }
+        } else {
+          forkReplayActive = false;
+          forkReplayLastTimestampMs = undefined;
+        }
       }
       if (parsed.type === "turn_context") {
         currentModel = stringValue(parsed.payload?.model) ?? currentModel;

@@ -35,7 +35,7 @@ import type { UsageHistoryProvider } from "../../runtime/usageHistoryProvider";
 /** Increment when persisted metadata or selection semantics become incompatible. */
 export const CODEX_USAGE_HISTORY_INDEX_VERSION = 1;
 /** Increment when unchanged rollout files must be parsed again for correctness. */
-export const CODEX_USAGE_HISTORY_PARSER_VERSION = 2;
+export const CODEX_USAGE_HISTORY_PARSER_VERSION = 3;
 const PROVIDER_ID = "codex";
 const DEFAULT_PAGE_SIZE = 200;
 const CHECKPOINT_FILE_INTERVAL = 100;
