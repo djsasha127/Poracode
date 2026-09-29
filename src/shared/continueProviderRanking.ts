@@ -20,6 +20,23 @@ export function supportsPresentation(agent: AgentStatus, mode: ThreadPresentatio
 }
 
 /**
+ * A provider can target itself when the handoff changes presentation (for
+ * example, a terminal session continuing in the provider's structured chat).
+ * Keeping this rule beside presentation resolution prevents the header and the
+ * dialog from disagreeing about whether a continuation target exists.
+ */
+export function canContinueToAgent(
+  agent: AgentStatus,
+  sourceAgentKind: string,
+  sourceMode: ThreadPresentationMode,
+): boolean {
+  return (
+    agent.kind !== sourceAgentKind ||
+    supportedPresentationModes(agent).some((mode) => mode !== sourceMode)
+  );
+}
+
+/**
  * Whether this presentation can carry Poracode's session tools during a
  * provider handoff. Providers that own their MCP settings resolve those tools
  * outside the composer; every other provider declares the effective scope per

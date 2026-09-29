@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentCapability, AgentStatus } from "./contracts";
 import { crossagentRankingPreferences } from "./crossagentRanking";
 import {
+  canContinueToAgent,
   continueRankingCandidate,
   rankContinueProviders,
   resolveInitialPresentationMode,
@@ -29,6 +30,32 @@ function agent(kind: string, overrides: Partial<AgentCapability> = {}): AgentSta
     capabilities: capability(overrides),
   } as AgentStatus;
 }
+
+describe("canContinueToAgent", () => {
+  it("allows the current provider when it offers another presentation", () => {
+    expect(canContinueToAgent(agent("muse"), "muse", "terminal")).toBe(true);
+  });
+
+  it("rejects the current provider when it only offers the active presentation", () => {
+    expect(
+      canContinueToAgent(
+        agent("muse", { presentationModes: ["terminal"], presentationMode: "terminal" }),
+        "muse",
+        "terminal",
+      ),
+    ).toBe(false);
+  });
+
+  it("allows a different provider regardless of presentation", () => {
+    expect(
+      canContinueToAgent(
+        agent("codex", { presentationModes: ["terminal"], presentationMode: "terminal" }),
+        "muse",
+        "terminal",
+      ),
+    ).toBe(true);
+  });
+});
 
 describe("continueRankingCandidate", () => {
   it("reads models and per-model reasoning from the presentation the agent would open in", () => {

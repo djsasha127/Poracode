@@ -82,6 +82,7 @@ import {
 import { crossagentRankingPreferences } from "@/shared/crossagentRanking";
 import type { RankedCrossagentCandidate } from "@/shared/crossagentRanking";
 import {
+  canContinueToAgent,
   continuesInPlace,
   rankContinueProviders,
   resolveInitialPresentationMode,
@@ -306,10 +307,12 @@ export function ContinueInProviderDialog(props: {
   );
   const readThreadToolsEnabled = useSharedSettings(readThreadToolEnabled);
 
-  const otherAgents = installedAgents.filter((a) => a.kind !== thread.agentKind);
   const sourceAgent = installedAgents.find((a) => a.kind === thread.agentKind);
   const sourcePresentationMode =
     thread.presentationMode ?? sourceAgent?.capabilities.presentationMode ?? "terminal";
+  const otherAgents = installedAgents.filter((agent) =>
+    canContinueToAgent(agent, thread.agentKind, sourcePresentationMode),
+  );
 
   // Propose the provider the user actually reaches for most; `proposedRanking`
   // feeds `preferredConfigPatch` below so the proposal carries the model the

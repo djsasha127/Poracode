@@ -28,6 +28,7 @@ import { GuiThreadContent } from "./ThreadContent";
 import { TerminalThreadContent } from "./TerminalThreadContent";
 import { ThreadHeaderStatusButton } from "./ThreadHeaderStatus";
 import { ThreadToolRail } from "./ThreadToolRail";
+import { canContinueToAgent } from "@/shared/continueProviderRanking";
 
 /**
  * Strip Electron's `Error invoking remote method '<channel>': Error: ` prefix
@@ -230,9 +231,13 @@ export const ThreadView = memo(function ThreadView(props: ThreadViewProps) {
   // during render (keyed on the request plus the guard outcome); the store
   // clear stays in the effect below.
   const continueRequestedThreadId = useContinueInProviderStore((s) => s.requestedThreadId);
-  const canOpenContinueDialog =
-    onContinueInProvider !== undefined &&
-    installedAgents?.some((a) => a.kind !== thread.agentKind) === true;
+  const sourcePresentationMode =
+    thread.presentationMode ?? agentStatus?.capabilities.presentationMode ?? "terminal";
+  const hasContinueTarget =
+    installedAgents?.some((agent) =>
+      canContinueToAgent(agent, thread.agentKind, sourcePresentationMode),
+    ) === true;
+  const canOpenContinueDialog = onContinueInProvider !== undefined && hasContinueTarget;
   const continueRequestKey =
     continueRequestedThreadId === thread.id && canOpenContinueDialog
       ? continueRequestedThreadId
@@ -244,17 +249,9 @@ export const ThreadView = memo(function ThreadView(props: ThreadViewProps) {
   }
   useEffect(() => {
     if (continueRequestedThreadId !== thread.id) return;
-    if (!onContinueInProvider || !installedAgents?.some((a) => a.kind !== thread.agentKind)) {
-      return;
-    }
+    if (!canOpenContinueDialog) return;
     useContinueInProviderStore.getState().clear(thread.id);
-  }, [
-    continueRequestedThreadId,
-    thread.id,
-    thread.agentKind,
-    onContinueInProvider,
-    installedAgents,
-  ]);
+  }, [continueRequestedThreadId, thread.id, canOpenContinueDialog]);
 
   useEffect(() => {
     // No thread id dep: the launch key below embeds `thread.id`, so a stale
@@ -428,9 +425,7 @@ export const ThreadView = memo(function ThreadView(props: ThreadViewProps) {
                 {isWsl ? <TuxIcon className="h-3 w-auto shrink-0 px-1 text-muted/60" /> : null}
                 {/* No `sessionRef` gate — see "continue-in" in ThreadContextMenu:
                     no session is exactly when the transcript fallback matters. */}
-                {onContinueInProvider &&
-                installedAgents &&
-                installedAgents.filter((a) => a.kind !== thread.agentKind).length > 0 ? (
+                {canOpenContinueDialog ? (
                   <Tooltip delay={0}>
                     <Tooltip.Trigger>
                       <button
