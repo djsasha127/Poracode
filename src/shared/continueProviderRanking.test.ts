@@ -160,14 +160,47 @@ describe("rankContinueProviders", () => {
 });
 
 describe("resolveInitialPresentationMode", () => {
-  it("prefers the mode this agent was last opened in", () => {
-    expect(resolveInitialPresentationMode(agent("copilot"), { copilot: "terminal" }, "gui")).toBe(
-      "terminal",
-    );
+  it("prefers a tool-capable mode over a remembered terminal without MCP", () => {
+    expect(
+      resolveInitialPresentationMode(
+        agent("copilot", { mcpScope: { terminal: "none", gui: "launch" } }),
+        { copilot: "terminal" },
+        "terminal",
+      ),
+    ).toBe("gui");
   });
 
-  it("otherwise mirrors the source thread's mode", () => {
-    expect(resolveInitialPresentationMode(agent("copilot"), {}, "terminal")).toBe("terminal");
+  it("keeps a remembered terminal when that presentation carries launch MCP", () => {
+    expect(
+      resolveInitialPresentationMode(
+        agent("copilot", { mcpScope: { terminal: "launch", gui: "launch" } }),
+        { copilot: "terminal" },
+        "gui",
+      ),
+    ).toBe("terminal");
+  });
+
+  it("keeps the source mode when neither presentation supports session tools", () => {
+    expect(
+      resolveInitialPresentationMode(
+        agent("copilot", { mcpScope: { terminal: "none", gui: "none" } }),
+        {},
+        "terminal",
+      ),
+    ).toBe("terminal");
+  });
+
+  it("keeps provider-owned MCP presentations eligible", () => {
+    expect(
+      resolveInitialPresentationMode(
+        agent("copilot", {
+          mcpScope: { terminal: "none", gui: "none" },
+          mcpConfigSource: "agentSettings",
+        }),
+        { copilot: "terminal" },
+        "gui",
+      ),
+    ).toBe("terminal");
   });
 
   it("ignores a remembered mode the agent does not support", () => {

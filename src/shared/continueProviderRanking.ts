@@ -1,4 +1,8 @@
-import type { AgentStatus, ThreadPresentationMode } from "./contracts";
+import {
+  type AgentStatus,
+  type ThreadPresentationMode,
+  resolveComposerMcpScope,
+} from "./contracts";
 import { capabilitiesForPresentation, modelSelectionFor } from "./agentSelection";
 import {
   rankCrossagentCandidates,
@@ -16,6 +20,17 @@ export function supportsPresentation(agent: AgentStatus, mode: ThreadPresentatio
 }
 
 /**
+ * Whether this presentation can carry Poracode's session tools during a
+ * provider handoff. Providers that own their MCP settings resolve those tools
+ * outside the composer; every other provider declares the effective scope per
+ * presentation.
+ */
+function supportsHandoffSessionTools(agent: AgentStatus, mode: ThreadPresentationMode): boolean {
+  if (agent.capabilities.mcpConfigSource === "agentSettings") return true;
+  return resolveComposerMcpScope(agent.capabilities.mcpScope, mode) !== "none";
+}
+
+/**
  * Unlike the 2-argument `resolveInitialPresentationMode` in
  * `threadDraftViewHelpers.ts` (draft view, "gui" fallback, no source), this
  * handoff variant carries the source thread's mode over when the target
@@ -29,8 +44,24 @@ export function resolveInitialPresentationMode(
   if (!agent) return "terminal";
   const supported = supportedPresentationModes(agent);
   const last = lastByAgent[agent.kind];
-  if (last && supported.includes(last)) return last;
-  if (supported.includes(sourceMode)) return sourceMode;
+  const rememberedOrSource =
+    last && supported.includes(last)
+      ? last
+      : supported.includes(sourceMode)
+        ? sourceMode
+        : undefined;
+
+  // A handoff is expected to keep communicating with the rest of Poracode.
+  // Do not let an old Terminal preference silently strand a target when the
+  // same provider offers a Chat runtime with app-controls/Crossagents. The
+  // dialog still exposes the mode picker, so Terminal remains an explicit
+  // choice for users who want the native TUI.
+  if (rememberedOrSource && supportsHandoffSessionTools(agent, rememberedOrSource)) {
+    return rememberedOrSource;
+  }
+  const toolCapableMode = supported.find((mode) => supportsHandoffSessionTools(agent, mode));
+  if (toolCapableMode) return toolCapableMode;
+  if (rememberedOrSource) return rememberedOrSource;
   if (supported.includes("gui")) return "gui";
   return supported[0] ?? agent.capabilities.presentationMode ?? "terminal";
 }
