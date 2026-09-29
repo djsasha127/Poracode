@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   appIdFor,
   artifactPrefixFor,
+  electronUserDataDirNameFor,
   PORACODE_CHANNELS,
   productNameFor,
   updaterChannelFor,
@@ -16,6 +17,7 @@ const cjs = requireFromHere("../../scripts/electron-builder.shared.cjs") as {
   productNameFor: (channel: string) => string;
   appIdFor: (channel: string) => string;
   userDataDirNameFor: (channel: string) => string;
+  electronUserDataDirNameFor: (channel: string) => string;
   updaterChannelFor: (channel: string) => string | undefined;
   artifactPrefixFor: (channel: string) => string;
   macExecutableNameFor: (channel: string, artifactKind: "branded" | "updater") => string;
@@ -31,6 +33,7 @@ describe("electron-builder.shared.cjs mirrors src/shared/channel.ts", () => {
       expect(cjs.productNameFor(channel)).toBe(productNameFor(channel));
       expect(cjs.appIdFor(channel)).toBe(appIdFor(channel));
       expect(cjs.userDataDirNameFor(channel)).toBe(userDataDirNameFor(channel));
+      expect(cjs.electronUserDataDirNameFor(channel)).toBe(electronUserDataDirNameFor(channel));
       expect(cjs.updaterChannelFor(channel)).toBe(updaterChannelFor(channel));
       expect(cjs.artifactPrefixFor(channel)).toBe(artifactPrefixFor(channel));
     });

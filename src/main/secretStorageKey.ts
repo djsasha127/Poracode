@@ -5,10 +5,15 @@ import { safeStorage } from "electron";
 import { writeFileAtomic } from "@/shared/atomicFile";
 
 const SAFE_STORAGE_KEY_FILE = "secret-key.safe";
+const LOCAL_STORAGE_KEY_FILE = "secret-key.local";
 let sessionOnlyKey: string | undefined;
 
 function keyFilePath(baseDir: string): string {
   return join(baseDir, SAFE_STORAGE_KEY_FILE);
+}
+
+function localKeyFilePath(baseDir: string): string {
+  return join(baseDir, LOCAL_STORAGE_KEY_FILE);
 }
 
 function isValidKey(value: string): boolean {
@@ -41,6 +46,37 @@ function createPersistentKey(path: string): string {
     writeFileAtomic(path, encrypted.toString("base64"), { encoding: "utf8", mode: 0o600 });
   } catch {
     throw new Error("Unable to persist the encrypted Poracode secret storage key.");
+  }
+  return key;
+}
+
+/**
+ * Stable storage key for explicitly opted-in, locally ad-hoc-signed builds.
+ *
+ * macOS binds safeStorage access to an ad-hoc binary's CDHash, which changes
+ * every time app.asar is rebuilt. Reusing `secret-key.safe` would therefore
+ * block each local update behind a Keychain password dialog before the main
+ * window exists. The local package already trusts the user's data directory,
+ * so this opt-in stores a random key there with owner-only permissions. The
+ * OS-sealed key remains untouched and official builds keep using it.
+ */
+export function readOrCreateLocalSecretStorageKey(baseDir: string): string {
+  const path = localKeyFilePath(baseDir);
+  try {
+    const existing = readFileSync(path, "utf8").trim();
+    if (isValidKey(existing)) return existing;
+    console.warn("[credential-storage] invalid local signing key; rotating local key.");
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) {
+      throw new Error("Unable to read the local Poracode secret storage key.", { cause: error });
+    }
+  }
+
+  const key = randomBytes(32).toString("base64");
+  try {
+    writeFileAtomic(path, key, { encoding: "utf8", mode: 0o600 });
+  } catch {
+    throw new Error("Unable to persist the local Poracode secret storage key.");
   }
   return key;
 }

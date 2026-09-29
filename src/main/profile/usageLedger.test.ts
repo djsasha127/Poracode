@@ -190,6 +190,51 @@ describe.skipIf(!sqliteAvailable)("usageLedger (real sqlite round-trip)", () => 
     expect(sampleCount()).toBe(3);
   });
 
+  it("records per-call billable categories once without double-counting the total", () => {
+    const event = spent({
+      counterKind: "per-call",
+      counter: 175,
+      sampleId: "priced-call",
+      model: "claude-sonnet-4",
+      breakdown: { input: 100, output: 25, cacheRead: 40, cacheWrite: 10 },
+    });
+
+    recordUsageSpentFromRuntimeEvents(THREAD_ID, [event]);
+    recordUsageSpentFromRuntimeEvents(THREAD_ID, [event]);
+
+    expect(tokenRows().map(({ kind, value }) => ({ kind, value }))).toEqual([
+      { kind: "tokens_v2", value: 175 },
+      { kind: "tokens_v2_input", value: 100 },
+      { kind: "tokens_v2_output", value: 25 },
+      { kind: "tokens_v2_cache_read", value: 40 },
+      { kind: "tokens_v2_cache_write", value: 10 },
+    ]);
+  });
+
+  it("deltas cumulative billable categories independently", () => {
+    recordUsageSpentFromRuntimeEvents(THREAD_ID, [
+      spent({
+        counter: 150,
+        fresh: true,
+        breakdown: { input: 100, output: 20, cacheRead: 30 },
+      }),
+    ]);
+    recordUsageSpentFromRuntimeEvents(THREAD_ID, [
+      spent({ counter: 230, breakdown: { input: 140, output: 30, cacheRead: 60 } }),
+    ]);
+
+    expect(tokenRows().map(({ kind, value }) => ({ kind, value }))).toEqual([
+      { kind: "tokens_v2", value: 150 },
+      { kind: "tokens_v2_input", value: 100 },
+      { kind: "tokens_v2_output", value: 20 },
+      { kind: "tokens_v2_cache_read", value: 30 },
+      { kind: "tokens_v2", value: 80 },
+      { kind: "tokens_v2_input", value: 40 },
+      { kind: "tokens_v2_output", value: 10 },
+      { kind: "tokens_v2_cache_read", value: 30 },
+    ]);
+  });
+
   it("commits a mixed batch together and ignores non-usage events", () => {
     recordUsageSpentFromRuntimeEvents(THREAD_ID, [
       spent({
@@ -242,6 +287,30 @@ describe.skipIf(!sqliteAvailable)("usageLedger (real sqlite round-trip)", () => 
     recordUsageSpentFromRuntimeEvents(THREAD_ID, [spent({ counter: 64, fresh: true })]);
 
     expect(tokenRows().map((row) => row.ts)).toEqual([42000]);
+  });
+
+  it("persists the thread's model effort and fast mode for historical attribution", () => {
+    dbUpsertThread(
+      {
+        ...testThread(),
+        config: {
+          model: "claude-opus-4",
+          effort: "high",
+          fast: true,
+          mode: "plan",
+        },
+      },
+      1,
+    );
+    recordUsageSpentFromRuntimeEvents(THREAD_ID, [
+      spent({ counter: 64, fresh: true, occurredAt: 43000 }),
+    ]);
+
+    expect(
+      getSqlite()
+        .prepare("SELECT model, mode, fast, effort FROM usage_events WHERE kind = 'tokens_v2'")
+        .get(),
+    ).toEqual({ model: "claude-opus-4", mode: "plan", fast: 1, effort: "high" });
   });
 
   it("skips events for an unknown thread without throwing", () => {

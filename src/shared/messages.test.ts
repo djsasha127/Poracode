@@ -117,8 +117,29 @@ describe("friendlyErrorWithDetail", () => {
     expect(
       friendlyError(new Error("Poracode SSH requires Node 24.10 or newer on the remote host.")),
     ).toBe(
-      "Poracode Helper failed to start. Check that Node 24.10 or newer and npm are installed on the remote machine.",
+      "Poracode Helper could not install its private Node runtime. Check that the remote machine can access nodejs.org, then retry.",
     );
+    expect(
+      friendlyError(
+        new Error(
+          "Poracode SSH could not provision its private Node runtime. Check outbound access to nodejs.org, then retry.",
+        ),
+      ),
+    ).toBe(
+      "Poracode Helper could not install its private Node runtime. Check that the remote machine can access nodejs.org, then retry.",
+    );
+    expect(
+      friendlyError(
+        new Error("Poracode data dir /tmp/shared is in use by another Poracode process (pid 123)."),
+      ),
+    ).toBe(
+      "The shared Poracode workspace is still in use by another helper. Retry the SSH connection in a few seconds.",
+    );
+    expect(
+      friendlyError(
+        new Error("Poracode Helper failed to start or returned an incompatible protocol."),
+      ),
+    ).toBe("Poracode Helper failed to start. Retry the SSH connection.");
   });
 
   it("preserves the path when mapping SSH runtime manifest failures", () => {

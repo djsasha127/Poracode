@@ -85,6 +85,7 @@ export const BUILT_IN_MCP_SERVER_TOOL_NAMES = {
     "list_agents",
     "get_agent",
     "spawn_agent",
+    "delegate_agent",
     "list_routing_preferences",
     "set_routing_preference",
     "remove_routing_preference",

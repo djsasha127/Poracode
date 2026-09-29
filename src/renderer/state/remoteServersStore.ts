@@ -2,7 +2,14 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { msg } from "@lingui/core/macro";
 import { toast } from "@heroui/react";
-import type { BrowseHostDirectoryResult, Thread, TerminalSize } from "@/shared/contracts";
+import type {
+  BrowseHostDirectoryResult,
+  ProfileTokenStats,
+  ProviderUsageResponse,
+  Thread,
+  TerminalSize,
+  UsageSnapshot,
+} from "@/shared/contracts";
 import { friendlyError, msg as sharedMsg } from "@/shared/messages";
 import {
   isRemoteTransportFailure,
@@ -101,6 +108,57 @@ function reuseRemoteRows<T extends { readonly id: string }>(current: T[], incomi
     return resolved;
   });
   return changed ? next : current;
+}
+
+function usageSnapshotEqual(current: UsageSnapshot, incoming: UsageSnapshot): boolean {
+  return JSON.stringify(current) === JSON.stringify(incoming);
+}
+
+function reuseProviderUsage(
+  current: ProviderUsageResponse | undefined,
+  incoming: ProviderUsageResponse,
+): ProviderUsageResponse {
+  if (!current) return incoming;
+  const currentById = new Map(current.snapshots.map((snapshot) => [snapshot.providerId, snapshot]));
+  let changed = current.snapshots.length !== incoming.snapshots.length;
+  const snapshots = incoming.snapshots.map((snapshot, index) => {
+    const existing = currentById.get(snapshot.providerId);
+    const resolved = existing && usageSnapshotEqual(existing, snapshot) ? existing : snapshot;
+    if (resolved !== current.snapshots[index]) changed = true;
+    return resolved;
+  });
+  return !changed && current.fromCache === incoming.fromCache
+    ? current
+    : { snapshots, fromCache: incoming.fromCache };
+}
+
+function mergeProviderUsageSnapshot(
+  current: ProviderUsageResponse | undefined,
+  snapshot: UsageSnapshot,
+): ProviderUsageResponse {
+  const snapshots = current?.snapshots ?? [];
+  const index = snapshots.findIndex((entry) => entry.providerId === snapshot.providerId);
+  if (index >= 0 && usageSnapshotEqual(snapshots[index]!, snapshot)) {
+    return current!;
+  }
+  if (index < 0) return { snapshots: [...snapshots, snapshot], fromCache: false };
+  const next = [...snapshots];
+  next[index] = snapshot;
+  return { snapshots: next, fromCache: false };
+}
+
+function mergeProviderUsageSubset(
+  current: ProviderUsageResponse | undefined,
+  incoming: ProviderUsageResponse,
+): ProviderUsageResponse {
+  if (!current) return incoming;
+  let merged: ProviderUsageResponse = current;
+  for (const snapshot of incoming.snapshots) {
+    merged = mergeProviderUsageSnapshot(merged, snapshot);
+  }
+  return merged.fromCache === incoming.fromCache
+    ? merged
+    : { ...merged, fromCache: incoming.fromCache };
 }
 
 const defaultClientFactory: RemoteClientFactory = (endpoint, accessToken) =>
@@ -529,6 +587,51 @@ export const useRemoteServersStore = create<RemoteServersState>()(
                     message.seq,
                   );
                   remoteServerSnapshotSeqByDesktopId.set(server.desktopId, nextSeq);
+                  const usageEvent = message.event as {
+                    type?: unknown;
+                    snapshot?: UsageSnapshot;
+                    snapshots?: UsageSnapshot[];
+                  };
+                  if (
+                    usageEvent.type === "provider-usage" &&
+                    usageEvent.snapshot &&
+                    typeof usageEvent.snapshot.providerId === "string"
+                  ) {
+                    set((state) => {
+                      const runtime = state.runtime[server.desktopId];
+                      if (!runtime) return state;
+                      const providerUsage = mergeProviderUsageSnapshot(
+                        runtime.providerUsage,
+                        usageEvent.snapshot!,
+                      );
+                      if (providerUsage === runtime.providerUsage) return state;
+                      return {
+                        runtime: {
+                          ...state.runtime,
+                          [server.desktopId]: { ...runtime, providerUsage },
+                        },
+                      };
+                    });
+                  } else if (
+                    usageEvent.type === "provider-usage-all" &&
+                    Array.isArray(usageEvent.snapshots)
+                  ) {
+                    set((state) => {
+                      const runtime = state.runtime[server.desktopId];
+                      if (!runtime) return state;
+                      const providerUsage = reuseProviderUsage(runtime.providerUsage, {
+                        snapshots: usageEvent.snapshots!,
+                        fromCache: false,
+                      });
+                      if (providerUsage === runtime.providerUsage) return state;
+                      return {
+                        runtime: {
+                          ...state.runtime,
+                          [server.desktopId]: { ...runtime, providerUsage },
+                        },
+                      };
+                    });
+                  }
                   const open = get().openThread;
                   const remoteThreadIds = new Set(
                     get().runtime[server.desktopId]?.threads.map((thread) => thread.id) ?? [],
@@ -668,6 +771,7 @@ export const useRemoteServersStore = create<RemoteServersState>()(
               projects: current?.projects ?? state.lastKnownProjects[server.desktopId] ?? [],
               threads: current?.threads ?? [],
               ...(current?.agentStatuses ? { agentStatuses: current.agentStatuses } : {}),
+              ...(current?.providerUsage ? { providerUsage: current.providerUsage } : {}),
             };
           }
           return { runtime };
@@ -741,7 +845,10 @@ export const useRemoteServersStore = create<RemoteServersState>()(
           }
           // refreshServer below owns other visible connection errors.
         }
-        await get().refreshServer(server.desktopId);
+        await Promise.all([
+          get().refreshServer(server.desktopId),
+          get().refreshProviderUsage(server.desktopId),
+        ]);
         if (!canContinue()) return;
         startRemoteServerEventStream(server);
         checkHostUpdateInBackground(server);
@@ -833,10 +940,11 @@ export const useRemoteServersStore = create<RemoteServersState>()(
           client: { label: "Poracode Desktop", deviceType: "desktop" },
         });
         const client = factory(normalized, tokenResult.accessToken);
-        const [environment, snapshot, agentStatuses] = await Promise.all([
+        const [environment, snapshot, agentStatuses, providerUsage] = await Promise.all([
           client.environment(),
           client.snapshot(),
           client.agentStatuses(),
+          client.providerUsage().catch(() => undefined),
         ]);
         const record: RemoteServerRecord = {
           desktopId: environment.desktopId,
@@ -867,6 +975,7 @@ export const useRemoteServersStore = create<RemoteServersState>()(
               projects: snapshot.projects,
               threads: snapshot.threads,
               agentStatuses,
+              ...(providerUsage ? { providerUsage } : {}),
             },
           },
         }));
@@ -973,9 +1082,10 @@ export const useRemoteServersStore = create<RemoteServersState>()(
           return "started";
         },
 
-        openRemoteThread: async (desktopId, threadId) => {
-          const requestSeq = openRemoteThreadRequestSeq + 1;
-          openRemoteThreadRequestSeq = requestSeq;
+        openRemoteThread: async (desktopId, threadId, options) => {
+          const activate = options?.activate !== false;
+          const requestSeq = activate ? openRemoteThreadRequestSeq + 1 : undefined;
+          if (requestSeq !== undefined) openRemoteThreadRequestSeq = requestSeq;
           const server = get().servers.find((entry) => entry.desktopId === desktopId);
           if (!server) {
             // Never reject: sidebar rows call this via `void openRemoteThread(...)`
@@ -998,11 +1108,11 @@ export const useRemoteServersStore = create<RemoteServersState>()(
           try {
             snapshot = await withClient(desktopId, (client) => client.threadHistory(threadId));
           } catch (error) {
-            if (requestSeq !== openRemoteThreadRequestSeq) return false;
+            if (requestSeq !== undefined && requestSeq !== openRemoteThreadRequestSeq) return false;
             toast.danger(friendlyError(error) || i18n._(msg`Failed to open remote thread.`));
             return false;
           }
-          if (requestSeq !== openRemoteThreadRequestSeq) return false;
+          if (requestSeq !== undefined && requestSeq !== openRemoteThreadRequestSeq) return false;
           const projectedSnapshot = projectRemoteThreadSnapshot(desktopId, snapshot);
           const viewThreadId = projectedSnapshot.thread.id;
           const existingRuntimeItemIds =
@@ -1024,7 +1134,7 @@ export const useRemoteServersStore = create<RemoteServersState>()(
           });
           const openThread = buildOpenThread(desktopId, snapshot);
           set({ openThread });
-          useAppStore.getState().openThread(openThread.thread.id);
+          if (activate) useAppStore.getState().openThread(openThread.thread.id);
           remoteServerSnapshotSeqByDesktopId.set(
             desktopId,
             Math.max(remoteServerSnapshotSeqByDesktopId.get(desktopId) ?? 0, snapshot.snapshotSeq),
@@ -1191,6 +1301,10 @@ export const useRemoteServersStore = create<RemoteServersState>()(
                     projects,
                     threads,
                     ...(nextAgentStatuses ? { agentStatuses: nextAgentStatuses } : {}),
+                    ...(current?.providerUsage ? { providerUsage: current.providerUsage } : {}),
+                    ...(current?.profileTokenStats
+                      ? { profileTokenStats: current.profileTokenStats }
+                      : {}),
                   };
             set((state) => {
               if (!state.servers.some((entry) => entry.desktopId === desktopId)) return state;
@@ -1234,7 +1348,80 @@ export const useRemoteServersStore = create<RemoteServersState>()(
               message: friendlyError(error) || i18n._(msg`Connection failed.`),
               projects: cached()?.projects ?? [],
               threads: cached()?.threads ?? [],
+              ...(cached()?.agentStatuses ? { agentStatuses: cached()!.agentStatuses } : {}),
+              ...(cached()?.providerUsage ? { providerUsage: cached()!.providerUsage } : {}),
+              ...(cached()?.profileTokenStats
+                ? { profileTokenStats: cached()!.profileTokenStats }
+                : {}),
             });
+          }
+        },
+
+        refreshProviderUsage: async (desktopId, providerIds) => {
+          const server = get().servers.find((entry) => entry.desktopId === desktopId);
+          if (!server) return;
+          try {
+            const incoming = await get()
+              .clientFactory(server.endpoint, server.accessToken)
+              .providerUsage(providerIds);
+            set((state) => {
+              const runtime = state.runtime[desktopId];
+              if (!runtime || !state.servers.some((entry) => entry.desktopId === desktopId)) {
+                return state;
+              }
+              const providerUsage = providerIds?.length
+                ? mergeProviderUsageSubset(runtime.providerUsage, incoming)
+                : reuseProviderUsage(runtime.providerUsage, incoming);
+              if (providerUsage === runtime.providerUsage) return state;
+              return {
+                runtime: {
+                  ...state.runtime,
+                  [desktopId]: { ...runtime, providerUsage },
+                },
+              };
+            });
+          } catch {
+            // Usage is auxiliary: keep the last successful data and connection state.
+          }
+        },
+
+        setProviderUsageApiKey: async (desktopId, providerId, apiKey) => {
+          const server = get().servers.find((entry) => entry.desktopId === desktopId);
+          if (!server) throw new Error("Remote server not found");
+          const client = get().clientFactory(server.endpoint, server.accessToken);
+          const result = await client.setProviderUsageApiKey({ providerId, apiKey });
+          if (!result.ok) throw new Error(result.error || "Provider sign-in failed");
+          await get().refreshProviderUsage(desktopId, [providerId]);
+        },
+
+        refreshProfileTokenStats: async (desktopId) => {
+          const server = get().servers.find((entry) => entry.desktopId === desktopId);
+          if (!server) return;
+          try {
+            const incoming: ProfileTokenStats = await get()
+              .clientFactory(server.endpoint, server.accessToken)
+              .profileTokenStats({
+                utcOffsetMinutes: -new Date().getTimezoneOffset(),
+                scope: "device",
+                window: "all",
+              });
+            set((state) => {
+              const runtime = state.runtime[desktopId];
+              if (!runtime || !state.servers.some((entry) => entry.desktopId === desktopId)) {
+                return state;
+              }
+              if (JSON.stringify(runtime.profileTokenStats) === JSON.stringify(incoming)) {
+                return state;
+              }
+              return {
+                runtime: {
+                  ...state.runtime,
+                  [desktopId]: { ...runtime, profileTokenStats: incoming },
+                },
+              };
+            });
+          } catch {
+            // Token totals are auxiliary: preserve the last successful value.
           }
         },
 

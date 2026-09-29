@@ -13,7 +13,7 @@ import {
   type StructuredTurnResult,
 } from "../../agents/base";
 import { captureSupervisorException } from "../../diagnostics/sentry";
-import { rewriteSegmentsForWsl } from "../threadAttachments";
+import { prepareStructuredAttachmentSegments, rewriteSegmentsForWsl } from "../threadAttachments";
 import type { PendingSteerSlot, QueuedStructuredTurn, SessionRuntime } from "../sessionTypes";
 
 const STEER_PREPARATION_TIMEOUT_MS = 750;
@@ -380,8 +380,9 @@ export class SteerCoordinator {
     if (!usesStructuredFlow || !session.structuredSession?.startTurn) {
       throw new Error("Thread does not support structured turns.");
     }
-    const effectiveSegments = payload.segments
-      ? await rewriteSegmentsForWsl(payload.segments, session.projectLocation, {
+    const preparedSegments = await prepareStructuredAttachmentSegments(payload.segments);
+    const effectiveSegments = preparedSegments
+      ? await rewriteSegmentsForWsl(preparedSegments, session.projectLocation, {
           preserveImageAttachments:
             session.adapter.capabilities.readsImageAttachmentsFromHost !== false,
           preservePdfAttachments: session.adapter.capabilities.readsPdfAttachmentsFromHost === true,

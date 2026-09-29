@@ -30,6 +30,10 @@ function userDataDirNameFor(channel) {
   return channel === "nightly" ? ".poracode-nightly" : ".poracode";
 }
 
+function electronUserDataDirNameFor(channel) {
+  return channel === "nightly" ? "poracode-nightly" : "poracode";
+}
+
 function updaterChannelFor(channel) {
   return channel === "nightly" ? "nightly" : undefined;
 }
@@ -60,6 +64,7 @@ module.exports = {
   productNameFor,
   appIdFor,
   userDataDirNameFor,
+  electronUserDataDirNameFor,
   updaterChannelFor,
   artifactPrefixFor,
   macExecutableNameFor,

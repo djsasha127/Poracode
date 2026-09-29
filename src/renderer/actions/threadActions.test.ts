@@ -16,6 +16,7 @@ import {
   requestDeleteThread,
   openNewThread,
   openThread,
+  prepareThreadForPane,
   reopenPaneThreadsIfInactive,
   reopenStoredThread,
   setThreadRuntimeReopenEnabled,
@@ -494,6 +495,64 @@ describe("threadActions", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(useAppStore.getState().pendingThreadLaunches[thread.id]).toBeUndefined();
       expect(useAppStore.getState().threads[0]?.status).toBe("inactive");
+    } finally {
+      useRemoteServersStore.setState({ openRemoteThread: previousOpenRemoteThread });
+    }
+  });
+
+  it("hydrates a dropped local GUI thread without changing the pane layout", async () => {
+    const visible = makeThread({ id: "visible" });
+    const dropped = makeThread({ id: "dropped", presentationMode: "gui" });
+    useAppStore.setState((state) => ({
+      ...state,
+      threads: [visible, dropped],
+      view: { kind: "thread", panes: [visible.id, dropped.id] },
+    }));
+
+    await prepareThreadForPane(dropped.id);
+
+    expect(hydrateThreadRuntimeItems).toHaveBeenCalledExactlyOnceWith(dropped.id);
+    expect(useAppStore.getState().view).toEqual({
+      kind: "thread",
+      panes: [visible.id, dropped.id],
+    });
+  });
+
+  it("hydrates a dropped remote thread without letting remote open replace the layout", async () => {
+    const previousOpenRemoteThread = useRemoteServersStore.getState().openRemoteThread;
+    const openRemoteThread = vi
+      .fn<
+        (
+          desktopId: string,
+          threadId: string,
+          options?: { readonly activate?: boolean },
+        ) => Promise<boolean>
+      >()
+      .mockResolvedValue(true);
+    useRemoteServersStore.setState({ openRemoteThread });
+    try {
+      const visible = makeThread({ id: "visible" });
+      const dropped = makeThread({
+        id: "remote:dropped",
+        presentationMode: "gui",
+        remoteServerId: "desktop-1",
+        remoteId: "rt-dropped",
+      });
+      useAppStore.setState((state) => ({
+        ...state,
+        threads: [visible, dropped],
+        view: { kind: "thread", panes: [visible.id, dropped.id] },
+      }));
+
+      await prepareThreadForPane(dropped.id);
+
+      expect(openRemoteThread).toHaveBeenCalledExactlyOnceWith("desktop-1", "rt-dropped", {
+        activate: false,
+      });
+      expect(useAppStore.getState().view).toEqual({
+        kind: "thread",
+        panes: [visible.id, dropped.id],
+      });
     } finally {
       useRemoteServersStore.setState({ openRemoteThread: previousOpenRemoteThread });
     }

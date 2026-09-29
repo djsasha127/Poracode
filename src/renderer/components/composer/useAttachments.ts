@@ -22,6 +22,21 @@ export interface Attachment {
   previewUrl?: string;
 }
 
+export type AttachmentPreparation =
+  | "direct-image"
+  | "convert-image"
+  | "extract-text"
+  | "pdf"
+  | "file-reference";
+
+export function attachmentPreparation(attachment: Pick<Attachment, "path">): AttachmentPreparation {
+  if (/\.(?:png|jpe?g|gif|webp)$/i.test(attachment.path)) return "direct-image";
+  if (/\.(?:svg|bmp|ico|avif)$/i.test(attachment.path)) return "convert-image";
+  if (/\.(?:docx|pptx|xlsx)$/i.test(attachment.path)) return "extract-text";
+  if (/\.pdf$/i.test(attachment.path)) return "pdf";
+  return "file-reference";
+}
+
 /**
  * Renderable URL for an image attachment. Prefers the local pasted bytes
  * (`previewUrl`), then a caller-supplied remote resolver (the paired desktop's

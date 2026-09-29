@@ -2940,6 +2940,9 @@ describe("CodexStructuredSession", () => {
     });
 
     expect(requests.map((request) => request.method)).toContain("thread/read");
+    expect(requests.find((request) => request.method === "thread/resume")).toMatchObject({
+      timeoutMs: 300_000,
+    });
     expect(runtimeEvents).toEqual([]);
     expect(updates).not.toContainEqual(
       expect.objectContaining({

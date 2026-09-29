@@ -284,6 +284,12 @@ export const sendThreadInputPayloadSchema = z
     prompt: z.string(),
     segments: z.array(promptSegmentSchema).optional(),
     config: threadConfigSchema,
+    /**
+     * `queue` preserves ordinary composer FIFO semantics. `auto` lets an
+     * agent-to-agent sender use a provider's non-interrupting steer capability
+     * while a turn is live, falling back to the same FIFO queue otherwise.
+     */
+    deliveryPolicy: z.enum(["queue", "auto"]).optional(),
     /** See {@link startThreadPayloadSchema.userMessageItemId}. */
     userMessageItemId: z.string().min(1).optional(),
   })
@@ -373,7 +379,7 @@ export type GetThreadFollowUpQueuePayload = z.infer<typeof getThreadFollowUpQueu
 
 /**
  * Renderer-visible representation of the single staged steer message that
- * sits in the supervisor between user submit-while-working and the agent
+ * sits in the supervisor between an explicit Steer submit and the agent
  * acknowledging the cancel. `null` (in IPC) clears the slot.
  */
 export interface PendingSteerState {
@@ -411,7 +417,6 @@ export interface ThreadFollowUpQueueState {
   items: PendingSteerState[];
   paused: boolean;
 }
-
 /**
  * Thread-metadata mutation issued by a remote client (the mobile PWA). Thread
  * metadata is owned by the desktop renderer's store (which persists it via

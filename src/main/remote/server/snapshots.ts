@@ -54,6 +54,9 @@ export function descriptor(ctx: RemoteServerContext): RemoteEnvironmentDescripto
     desktopId: ctx.options.identity.desktopId,
     label: ctx.options.identity.label,
     appVersion: ctx.options.appVersion,
+    capabilities: {
+      usageHistory: 1,
+    },
     ...(platform ? { platform } : {}),
     auth: {
       policy: "remote-reachable",

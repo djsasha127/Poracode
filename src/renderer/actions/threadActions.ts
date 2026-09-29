@@ -278,6 +278,31 @@ export function openThread(
 }
 
 /**
+ * Load everything a thread pane needs without changing the pane layout. DnD
+ * owns the exact replace/split target, so routing through `openThread` would
+ * overwrite that layout; skipping this preparation left never-opened threads
+ * mounted with an empty transcript forever.
+ */
+export async function prepareThreadForPane(threadId: string): Promise<void> {
+  const thread = useAppStore.getState().threads.find((item) => item.id === threadId);
+  if (!thread) return;
+
+  const owner = remoteOwner(thread);
+  if (owner) {
+    const hydrated = await useRemoteServersStore
+      .getState()
+      .openRemoteThread(owner.desktopId, owner.remoteId, { activate: false });
+    if (hydrated && threadRuntimeReopenEnabled) reopenStoredThread(threadId);
+    return;
+  }
+
+  if (thread.presentationMode === "gui" && !hasHydratedThreadRuntimeItems(threadId)) {
+    await hydrateThreadRuntimeItems(threadId);
+  }
+  if (threadRuntimeReopenEnabled) reopenStoredThread(threadId);
+}
+
+/**
  * Open the thread immediately before/after the current one in the sidebar's
  * visible order (the "Next chat" / "Previous chat" shortcuts). Navigation is
  * scoped to the current thread's project and wraps around at the ends. The order

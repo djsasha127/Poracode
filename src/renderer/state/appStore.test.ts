@@ -1024,7 +1024,7 @@ describe("appStore runtime config sync", () => {
     expect(useAppStore.getState().threads[0]?.status).toBe("idle");
   });
 
-  it("preserves the stored session ref when runtime re-emits the same provider id", () => {
+  it("preserves discovery time but advances the cursor for the same provider session", () => {
     const project = useAppStore.getState().addProject({
       kind: "windows",
       path: "C:\\repo",
@@ -1043,6 +1043,7 @@ describe("appStore runtime config sync", () => {
       sessionRef: {
         providerSessionId: "gemini-session-1",
         discoveredAt: "2026-05-01T12:00:00.000Z",
+        providerCursor: "cursor-1",
       },
     });
     useAppStore.getState().updateThreadRuntime(thread.id, {
@@ -1052,12 +1053,14 @@ describe("appStore runtime config sync", () => {
       sessionRef: {
         providerSessionId: "gemini-session-1",
         discoveredAt: "2026-05-01T12:05:00.000Z",
+        providerCursor: "cursor-2",
       },
     });
 
     expect(useAppStore.getState().threads[0]?.sessionRef).toEqual({
       providerSessionId: "gemini-session-1",
       discoveredAt: "2026-05-01T12:00:00.000Z",
+      providerCursor: "cursor-2",
     });
   });
 

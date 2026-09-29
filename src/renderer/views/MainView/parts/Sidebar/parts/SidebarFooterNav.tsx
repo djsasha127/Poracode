@@ -24,10 +24,6 @@ import {
   UpdateButtons,
   useUpdateEntryVisible,
 } from "@/renderer/views/MainView/parts/Sidebar/parts/UpdateButtons";
-import {
-  WhatsNewButton,
-  useWhatsNewEntryVisible,
-} from "@/renderer/views/MainView/parts/Sidebar/parts/WhatsNewButton";
 
 function prewarmSettings(): void {
   void DeferredSettingsOverlay.preload();
@@ -48,7 +44,7 @@ interface FooterActionItem {
 
 /**
  * Sticky footer nav of the expanded sidebar: workspace switcher, optional
- * update/changelog entries, the configurable shortcuts, Settings/Remote
+ * update entry, the configurable shortcuts, Settings/Remote
  * Access, and Hide sidebar. `footerCollapsed` (persisted) swaps the labeled
  * rows for a single icon row to give the thread list more vertical room; the
  * chevron toggle on the Hide-sidebar row switches modes.
@@ -73,7 +69,6 @@ export function SidebarFooterNav(props: { remoteAccessStatus: RemoteAccessSideba
   const { isCollapsed, collapse } = useSidebar();
   const hasSwitchableWorkspaces = useHasSwitchableWorkspaces();
   const updateEntryVisible = useUpdateEntryVisible();
-  const whatsNewEntryVisible = useWhatsNewEntryVisible();
 
   const rowRef = useRef<HTMLDivElement | null>(null);
   const enabledRef = useRef(!isCollapsed);
@@ -157,13 +152,10 @@ export function SidebarFooterNav(props: { remoteAccessStatus: RemoteAccessSideba
       </div>
     );
     // Leading entries with their own visibility rules and trigger semantics
-    // (dropdown, live status tooltip, unread badge); they never overflow.
+    // (dropdown and live status tooltip); they never overflow.
     const specialItems: ReactNode[] = [
       hasSwitchableWorkspaces ? <SidebarWorkspaceSwitcher key="workspace" iconOnly /> : null,
       updateEntryVisible ? <UpdateButtons key="update" iconOnly tooltipPlacement="top" /> : null,
-      whatsNewEntryVisible ? (
-        <WhatsNewButton key="whatsNew" iconOnly tooltipPlacement="top" />
-      ) : null,
     ].filter(Boolean);
     const actionItems: FooterActionItem[] = [
       ...sidebarShortcuts.map((shortcut) => ({
@@ -277,7 +269,6 @@ export function SidebarFooterNav(props: { remoteAccessStatus: RemoteAccessSideba
     <div className={sidebarFooterNavClass}>
       <SidebarWorkspaceSwitcher />
       <UpdateButtons />
-      <WhatsNewButton />
       {sidebarShortcuts.map((shortcut) => (
         <SidebarButton
           key={shortcut.id}

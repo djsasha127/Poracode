@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { stripAnsiPreservingLayout } from "@/shared/ansi";
 import { assistantDisplayText } from "@/shared/assistantMessageText";
 import type {
   AgentKind,
@@ -85,6 +86,7 @@ const sendArgsSchema = z.object({
   threadId: z.string().min(1),
   message: z.string().trim().min(1).max(50_000),
   interruptFirst: z.boolean().optional(),
+  delivery: z.enum(["auto", "queue"]).optional(),
 });
 const waitArgsSchema = z.object({
   threadIds: z.array(z.string().min(1)).min(1).max(8),
@@ -139,7 +141,7 @@ export const threadTools: ToolDomain = {
     {
       name: "read_thread",
       description:
-        "Read the latest user/assistant messages from a thread's recorded transcript. limit is the number of messages (default 30), before pages backward with nextCursor, and tool/reasoning rows are excluded to keep context bounded. Message text defaults to 2000 characters; raise maxChars only when a truncated result needs more detail. Works even when the session is inactive.",
+        "Read the latest user/assistant messages from a thread's recorded transcript. Terminal-presentation agent threads that do not produce structured transcript rows fall back to their live terminal scrollback. limit is the number of messages (default 30), before pages backward with nextCursor, and tool/reasoning rows are excluded to keep context bounded. Message text defaults to 2000 characters; raise maxChars only when a truncated result needs more detail. Works even when the session is inactive, except terminal fallback requires a live session.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -155,7 +157,7 @@ export const threadTools: ToolDomain = {
     {
       name: "create_thread",
       description:
-        "Create and launch a new app thread in a project (visible in the user's sidebar). The calling thread's agent and model are used unless overridden. Optionally run it in a fresh git worktree. For Home threads, workspaceId files the new conversation into a workspace (id or unique name from list_workspaces); omitted Home threads inherit the calling thread's workspace when possible. Project threads follow their project's workspace — use update_project to file a project.",
+        "Create and launch a new app thread in a project (visible in the user's sidebar). The calling thread's agent and model are used unless overridden. agentKind accepts a profile-qualified account such as `codex:work` or `claude:personal`; threads from different profiles can share the same project and exchange messages with send_to_thread. Optionally run it in a fresh git worktree. For Home threads, workspaceId files the new conversation into a workspace (id or unique name from list_workspaces); omitted Home threads inherit the calling thread's workspace when possible. Project threads follow their project's workspace — use update_project to file a project.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -163,7 +165,12 @@ export const threadTools: ToolDomain = {
         properties: {
           projectId: projectIdProp,
           prompt: { type: "string", minLength: 1, maxLength: 50000 },
-          agentKind: { type: "string", minLength: 1 },
+          agentKind: {
+            type: "string",
+            minLength: 1,
+            description:
+              "Agent/provider kind, including a configured account profile id such as `codex:work`.",
+          },
           model: { type: "string", minLength: 1 },
           effort: { type: "string", minLength: 1 },
           title: { type: "string", minLength: 1, maxLength: 200 },
@@ -183,7 +190,7 @@ export const threadTools: ToolDomain = {
     {
       name: "send_to_thread",
       description:
-        "Send a message to another thread. If the thread has no live session (it was stopped, unloaded, or the app restarted), it is resumed from its persisted config and session reference and the message is delivered as the first input of the resumed session. A thread with no resumable session cannot receive messages — use create_thread instead. Set interruptFirst to interrupt a working turn before sending (ignored when resuming, since nothing is running).",
+        "Send a message to another thread. delivery defaults to auto: while the target is actively working, Poracode uses native non-interrupting steering when that provider supports it and otherwise queues the message FIFO; an existing queue always stays ordered. Set delivery='queue' to always wait for the current turn. If the thread has no live session, it is resumed and the message becomes its first input. A thread with no resumable session cannot receive messages — use create_thread instead. Set interruptFirst only when the current turn must be cancelled before delivery.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -192,6 +199,7 @@ export const threadTools: ToolDomain = {
           threadId: threadIdProp,
           message: { type: "string", minLength: 1, maxLength: 50000 },
           interruptFirst: { type: "boolean" },
+          delivery: { type: "string", enum: ["auto", "queue"], default: "auto" },
         },
       },
     },
@@ -365,11 +373,35 @@ export const threadTools: ToolDomain = {
           : null,
       };
     },
-    read_thread: (args, ctx) => {
+    read_thread: async (args, ctx) => {
       const { threadId, limit, before, maxChars } = readArgsSchema.parse(args);
-      requireThread(ctx, threadId);
+      const thread = requireThread(ctx, threadId);
       const page = dbGetThreadConversationItemsPage(threadId, before, limit ?? READ_DEFAULT_LIMIT);
       if (page.items.length === 0) {
+        if ((thread.presentationMode ?? "terminal") === "terminal") {
+          const scrollback = stripAnsiPreservingLayout(
+            await ctx.supervisor.readTerminalScrollback({ threadId }),
+          ).trim();
+          if (scrollback) {
+            const cap = maxChars ?? ITEM_TEXT_MAX_CHARS;
+            const text = scrollback.length > cap ? scrollback.slice(-cap) : scrollback;
+            return {
+              threadId,
+              messageCount: 1,
+              source: "terminal_scrollback",
+              note: "This terminal-presentation thread has no structured transcript; showing its latest live terminal output instead.",
+              items: [
+                {
+                  role: "assistant",
+                  type: "terminal_output",
+                  state: "completed",
+                  text,
+                  ...(scrollback.length > cap ? { truncated: true } : {}),
+                },
+              ],
+            };
+          }
+        }
         return {
           threadId,
           messageCount: 0,
@@ -425,7 +457,7 @@ export const threadTools: ToolDomain = {
       });
     },
     send_to_thread: async (args, ctx) => {
-      const { threadId, message, interruptFirst } = sendArgsSchema.parse(args);
+      const { threadId, message, interruptFirst, delivery } = sendArgsSchema.parse(args);
       const thread = requireThread(ctx, threadId);
       if (interruptFirst) assertNotSelf(ctx, threadId, "interrupt");
       // Fast path: the thread has a live runtime session, so deliver directly.
@@ -433,8 +465,18 @@ export const threadTools: ToolDomain = {
       // supervisor throws `Unknown thread session`; fall through to resume.
       try {
         if (interruptFirst) await ctx.supervisor.interruptThread({ threadId });
-        await ctx.supervisor.sendThreadInput({ threadId, prompt: message, config: thread.config });
-        return { threadId, delivered: true, interruptedFirst: interruptFirst === true };
+        await ctx.supervisor.sendThreadInput({
+          threadId,
+          prompt: message,
+          config: thread.config,
+          deliveryPolicy: delivery ?? "auto",
+        });
+        return {
+          threadId,
+          delivered: true,
+          delivery: delivery ?? "auto",
+          interruptedFirst: interruptFirst === true,
+        };
       } catch (error) {
         if (!isUnknownThreadSessionError(error)) throw error;
       }

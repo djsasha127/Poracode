@@ -113,6 +113,8 @@ export type ProjectLocation = z.infer<typeof projectLocationSchema>;
 export const sessionRefSchema = z.object({
   providerSessionId: z.string().min(1),
   discoveredAt: z.string().min(1),
+  /** Opaque provider cursor used to resume only events the GUI has not persisted. */
+  providerCursor: z.string().min(1).optional(),
 });
 export type SessionRef = z.infer<typeof sessionRefSchema>;
 

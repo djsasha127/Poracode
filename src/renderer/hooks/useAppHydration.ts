@@ -16,6 +16,7 @@ import { startPrMergeAutoDone } from "@/renderer/state/prMergeAutoDone";
 import { startPrWatchStatusSync } from "@/renderer/state/prWatchStatusSync";
 import { startDeferredFeaturePrewarm } from "@/renderer/deferredFeatures";
 import { setThreadRuntimeReopenEnabled } from "@/renderer/actions/threadActions";
+import { adoptExternalDatabaseSnapshot } from "@/renderer/state/externalDatabaseSnapshot";
 
 interface IdleCallbackHandle {
   cancel: () => void;
@@ -98,30 +99,58 @@ export function useAppHydration(options: { runtimeOwner?: boolean } = {}) {
     let isActive = true;
     setThreadRuntimeReopenEnabled(false);
     skipSnapshotRefreshForView.current = null;
-    const appState = useAppStore.getState();
-    const experimentStore = useExperimentStore.getState();
-    experimentStore.reconcileExperiments(new Set(appState.projects.map((project) => project.id)));
-    const restoredView = appState.view;
-    if (
-      restoredView.kind === "experiment" &&
-      !useExperimentStore.getState().experiments[restoredView.experimentId]
-    ) {
-      appState.openHome();
-    }
-    console.log(
-      `[renderer] +${Date.now() - loadT0}ms: store hydrated, view=${JSON.stringify(restoredView)}, ${useAppStore.getState().projects.length} projects, ${useAppStore.getState().threads.length} threads`,
-    );
-
-    // Seed default workspaces and file pre-existing projects. Runtime-owner
-    // only: a remote client must not decide how the desktop's projects are
-    // grouped. Projects are hydrated by now, so nothing is missed.
-    if (runtimeOwner) {
-      void bootstrapWorkspaces().catch((error: unknown) => {
-        captureRendererException(error, { featureArea: "hydration" });
-      });
-    }
-
     void (async () => {
+      let persistedThreadIds: ReadonlySet<string> | undefined;
+      // The shared SQLite file may change while Zustand is hydrating (for
+      // example, Stable can still be writing when Nightly starts). Refresh it
+      // once more inside the startup gate so the first visible frame cannot be
+      // an empty or stale sidebar that only repairs itself after window focus.
+      if (runtimeOwner) {
+        try {
+          const stateBeforeRead = useAppStore.getState();
+          const projectIdsBeforeRead = new Set(
+            stateBeforeRead.projects.map((project) => project.id),
+          );
+          const threadIdsBeforeRead = new Set(stateBeforeRead.threads.map((thread) => thread.id));
+          const [projects, threads] = await Promise.all([
+            readBridge().dbGetProjects(),
+            readBridge().dbGetThreads(),
+          ]);
+          if (!isActive) return;
+          persistedThreadIds = new Set(threads.map((thread) => thread.id));
+          adoptExternalDatabaseSnapshot(projects, threads, {
+            projectIdsBeforeRead,
+            threadIdsBeforeRead,
+          });
+        } catch (error) {
+          captureRendererException(error, { featureArea: "hydration" });
+        }
+      }
+
+      const appState = useAppStore.getState();
+      const experimentStore = useExperimentStore.getState();
+      experimentStore.reconcileExperiments(new Set(appState.projects.map((project) => project.id)));
+      const restoredView = appState.view;
+      if (
+        restoredView.kind === "experiment" &&
+        !useExperimentStore.getState().experiments[restoredView.experimentId]
+      ) {
+        appState.openHome();
+      }
+      console.log(
+        `[renderer] +${Date.now() - loadT0}ms: store hydrated, view=${JSON.stringify(restoredView)}, ${useAppStore.getState().projects.length} projects, ${useAppStore.getState().threads.length} threads`,
+      );
+
+      // Seed default workspaces and file pre-existing projects. Runtime-owner
+      // only: a remote client must not decide how the desktop's projects are
+      // grouped. The authoritative database snapshot is applied above, so no
+      // local project is missed.
+      if (runtimeOwner) {
+        void bootstrapWorkspaces().catch((error: unknown) => {
+          captureRendererException(error, { featureArea: "hydration" });
+        });
+      }
+
       const candidateRecovery = recoverExperimentCandidateWorktrees();
       if (candidateRecovery) await candidateRecovery;
       if (!isActive) return;
@@ -133,14 +162,15 @@ export function useAppHydration(options: { runtimeOwner?: boolean } = {}) {
       }
 
       startTransition(() => {
-        markThreadsInactiveOnLaunch();
+        markThreadsInactiveOnLaunch(persistedThreadIds);
         purgeStaleArchivedThreads(30);
       });
 
       // A user can create a thread while this request is in flight. Scope the
       // response to the threads that existed when it began so an older empty
       // snapshot cannot mark a fresh direct launch inactive and relaunch it.
-      const requestedThreadIds = new Set(useAppStore.getState().threads.map((thread) => thread.id));
+      const requestedThreadIds =
+        persistedThreadIds ?? new Set(useAppStore.getState().threads.map((thread) => thread.id));
       const snapshotsPromise = readBridge().getThreadSnapshots();
 
       const visibleGuiThreadIds = collectVisibleGuiThreadIds();

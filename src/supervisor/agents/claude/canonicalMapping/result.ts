@@ -65,14 +65,24 @@ export function extractResultErrorMessage(message: SDKMessage): string | undefin
  * usage the CLI reports as a session-cumulative counter.
  */
 export function readClaudeApiUsageSpendTokens(usage: unknown): number | undefined {
+  const breakdown = readClaudeApiUsageBreakdown(usage);
+  if (!breakdown) return undefined;
+  const sum = breakdown.input + breakdown.output + breakdown.cacheWrite + breakdown.cacheRead;
+  return sum > 0 ? sum : undefined;
+}
+
+export function readClaudeApiUsageBreakdown(
+  usage: unknown,
+): { input: number; output: number; cacheWrite: number; cacheRead: number } | undefined {
   if (!usage || typeof usage !== "object") return undefined;
   const record = usage as Record<string, unknown>;
   const input = readNonNegativeInteger(record.input_tokens) ?? 0;
   const output = readNonNegativeInteger(record.output_tokens) ?? 0;
   const cacheCreation = readNonNegativeInteger(record.cache_creation_input_tokens) ?? 0;
   const cacheRead = readNonNegativeInteger(record.cache_read_input_tokens) ?? 0;
-  const sum = input + output + cacheCreation + cacheRead;
-  return sum > 0 ? sum : undefined;
+  return input + output + cacheCreation + cacheRead > 0
+    ? { input, output, cacheWrite: cacheCreation, cacheRead }
+    : undefined;
 }
 
 export function mapResultState(message: Extract<SDKMessage, { type: "result" }>): TurnState {

@@ -32,6 +32,7 @@ const MAX_BODY = 1024 * 1024;
 const MCP_PROTOCOL_VERSION = "2025-03-26";
 export const CROSSAGENT_PROVIDER_SESSION_ID_ARG = "__poracode_provider_session_id";
 const TOOL_PERMISSION_ALIASES = new Map([
+  ["delegate_agent", "spawn_agent"],
   ["spawn_agents", "spawn_agent"],
   ["wait_for_agents", "wait_for_agent"],
   ["run_agent", "spawn_agent"],

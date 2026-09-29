@@ -23,7 +23,7 @@ Do not delegate a trivial task, a sequence whose next step depends on the previo
 1. Classify the work with one to five concise task tags. Use `list_agents` when selection matters; call `get_agent` only when you need a provider's detailed models, reasoning choices, Fast support, or permission information.
 2. Omit provider, model, reasoning, and Fast unless the user chose them or the task requires a deliberate override. Let Crossagents apply learned and configured routing.
 3. Split the work into concrete subtasks with clear deliverables and non-overlapping edit scope. Every prompt must be self-contained and include relevant context, constraints, authority, expected output, and verification.
-4. For one short task, call `spawn_agent` in the foreground. Set `background=true` only when the coordinator has useful independent work to do before synchronization. Submit independent tasks together through one `tasks` call for actual parallelism.
+4. For one short task, call `delegate_agent` in the foreground. It is Poracode's collision-free alias for `spawn_agent`, which some Codex hosts reserve for their own helper system. Set `background=true` only when the coordinator has useful independent work to do before synchronization. Submit independent tasks together through one `tasks` call for actual parallelism.
 5. At the next real synchronization point, wait once for every required background result. Do not repeatedly poll. Cancel or continue without a stalled optional run.
 6. Inspect returned evidence and changes, resolve disagreements or shared-worktree conflicts, and verify the combined result against the original request.
 

@@ -151,6 +151,56 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss\\{333}
     expect(detectInstall).toHaveBeenCalledTimes(1);
   });
 
+  it("lets non-incremental callers await the startup roster instead of seeing an empty list", async () => {
+    let resolveDetection: ((status: AgentStatus) => void) | undefined;
+    const detectInstall = vi.fn<AgentAdapter["detectInstall"]>(
+      () =>
+        new Promise<AgentStatus>((resolve) => {
+          resolveDetection = resolve;
+        }),
+    );
+    const { service } = makeService(detectInstall);
+
+    const ready = service.getAgentStatusesReady({ wslDistros: [] });
+    await vi.waitFor(() => expect(detectInstall).toHaveBeenCalledTimes(1));
+    resolveDetection?.(makeStatus());
+
+    await expect(ready).resolves.toMatchObject({
+      fromCache: false,
+      windows: [expect.objectContaining({ kind: "codex", installed: true })],
+    });
+    expect(detectInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out a wedged native provider without withholding the remaining roster", async () => {
+    vi.useFakeTimers();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let stuckSignal: AbortSignal | undefined;
+    const stuck = makeAdapter("stuck", "Stuck", (ctx) => {
+      stuckSignal = ctx?.signal;
+      return new Promise(() => undefined);
+    });
+    const healthy = makeAdapter("codex", "Codex", async () => makeStatus());
+    const { service } = makeMultiAdapterService([stuck, healthy]);
+
+    try {
+      const pending = service.refreshAgentStatuses({ wslDistros: [] });
+      await vi.advanceTimersByTimeAsync(60_000);
+      const result = await pending;
+
+      expect(stuckSignal?.aborted).toBe(true);
+      expect(result.windows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "stuck", installed: false }),
+          expect.objectContaining({ kind: "codex", installed: true }),
+        ]),
+      );
+    } finally {
+      error.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("distinguishes a missing status cache from a cached unavailable provider", async () => {
     const detectInstall = vi
       .fn<AgentAdapter["detectInstall"]>()
@@ -419,10 +469,13 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss\\{333}
 
     await service.refreshAgentStatuses({ wslDistros: ["Ubuntu"] });
 
-    expect(detectInstall).toHaveBeenCalledWith({
-      envKind: process.platform === "win32" ? "windows" : "posix",
-      agentSettings: initialSettings,
-    });
+    expect(detectInstall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        envKind: process.platform === "win32" ? "windows" : "posix",
+        agentSettings: initialSettings,
+        signal: expect.any(AbortSignal),
+      }),
+    );
     expect(detectInstall).toHaveBeenCalledWith(
       expect.objectContaining({
         envKind: "wsl",
@@ -452,10 +505,13 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss\\{333}
       scope: { agentKinds: ["cursor"], envs: [{ kind: "wsl", distro: "Ubuntu" }] },
     });
 
-    expect(detectInstall).toHaveBeenCalledExactlyOnceWith({
-      envKind: "wsl",
-      wslDistro: "Ubuntu",
-      agentSettings: updatedSettings,
-    });
+    expect(detectInstall).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        envKind: "wsl",
+        wslDistro: "Ubuntu",
+        agentSettings: updatedSettings,
+        signal: expect.any(AbortSignal),
+      }),
+    );
   });
 });

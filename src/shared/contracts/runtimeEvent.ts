@@ -421,6 +421,19 @@ export type BackgroundTask = z.infer<typeof backgroundTaskSchema>;
 export const usageSpentSchema = z.object({
   counterKind: z.enum(["cumulative", "per-call"]),
   counter: z.number().int().nonnegative(),
+  /**
+   * Optional billable-token categories using the same cumulative/per-call
+   * semantics as `counter`. `input` excludes cached input so a consumer can
+   * apply the provider's cheaper cache-read rate without double counting.
+   */
+  breakdown: z
+    .object({
+      input: z.number().int().nonnegative().optional(),
+      output: z.number().int().nonnegative().optional(),
+      cacheRead: z.number().int().nonnegative().optional(),
+      cacheWrite: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
   scopeId: z.string().min(1),
   epoch: z.number().int().nonnegative(),
   fresh: z.boolean().optional(),

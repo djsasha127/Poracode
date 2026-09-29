@@ -355,6 +355,38 @@ export function hasRailUsage(snapshot: UsageSnapshot | undefined): boolean {
 }
 
 /**
+ * Pick the most useful usage snapshot while a remote project is focused.
+ *
+ * Remote quota is authoritative when that host returned real meters. When the
+ * remote host has no credential for a provider, keep the local app's meters
+ * visible instead of dropping the provider from the rail. This lets SSH users
+ * see browser-backed providers such as Muse without installing their CLIs on
+ * every remote host, while the returned source keeps the UI honest about where
+ * each number came from.
+ */
+export function resolveCombinedUsageSnapshot(
+  local: UsageSnapshot | undefined,
+  remote: UsageSnapshot | undefined,
+): { snapshot: UsageSnapshot | undefined; source: "local" | "remote" } {
+  const hasMeters = (snapshot: UsageSnapshot | undefined) =>
+    snapshot?.status === "ok" &&
+    (snapshot.windows.length > 0 ||
+      snapshot.cost !== undefined ||
+      snapshot.tokens !== undefined ||
+      snapshot.credits !== undefined);
+
+  if (hasMeters(remote)) return { snapshot: remote, source: "remote" };
+  if (hasMeters(local)) return { snapshot: local, source: "local" };
+  // A remote CLI can be authenticated even when its usage collector has no
+  // quota windows (Muse is the common case). Do not let a signed-out local
+  // fallback overwrite that authoritative remote account state.
+  if (remote?.status === "ok") return { snapshot: remote, source: "remote" };
+  if (local) return { snapshot: local, source: "local" };
+  if (remote) return { snapshot: remote, source: "remote" };
+  return { snapshot: undefined, source: "local" };
+}
+
+/**
  * Enabled providers ordered by the user's saved order, with the rest at the
  * tail. Shared by the usage panel and the sidebar rail so a reorder in either
  * place is reflected in both (both persist to `usage.providerOrder`).

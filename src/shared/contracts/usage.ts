@@ -23,7 +23,13 @@ export type {
   UsageProviderDescriptor,
 } from "@poracode/agents-usage";
 
-import type { UsageSnapshot } from "@poracode/agents-usage";
+import {
+  usageHistorySchema,
+  usageTokensSchema,
+  type UsageHistory,
+  type UsageSnapshot,
+  type UsageTokens,
+} from "@poracode/agents-usage";
 
 export const providerUsagePayloadSchema = z.object({
   /** Restrict collection to these provider ids; omitted = all known providers. */
@@ -42,6 +48,91 @@ export interface ProviderUsageResponse {
   snapshots: UsageSnapshot[];
   /** True when the snapshots came from the on-disk cache (a refresh may be in flight). */
   fromCache: boolean;
+}
+
+export const usageHistorySourceStatusSchema = z.enum(["online", "offline", "indexing", "disabled"]);
+export type UsageHistorySourceStatus = z.infer<typeof usageHistorySourceStatusSchema>;
+
+export const usageHistorySourceKindSchema = z.enum(["sessions", "archived-sessions", "archive"]);
+export type UsageHistorySourceKind = z.infer<typeof usageHistorySourceKindSchema>;
+
+export const usageHistorySourceDigestSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  machine: z.string(),
+  path: z.string(),
+  kind: usageHistorySourceKindSchema,
+  status: usageHistorySourceStatusSchema,
+  uniqueSessions: z.number().int().nonnegative(),
+  candidateFiles: z.number().int().nonnegative(),
+  lastIndexedAt: z.number().int().nonnegative().optional(),
+  processedFiles: z.number().int().nonnegative().optional(),
+  totalFiles: z.number().int().nonnegative().optional(),
+});
+export type UsageHistorySourceDigest = z.infer<typeof usageHistorySourceDigestSchema>;
+
+export const usageHistoryDigestSchema = z.object({
+  providerId: z.string(),
+  /** Version of the provider-owned persisted index. */
+  indexVersion: z.number().int().positive(),
+  /** Stable hash of selected session ids + fingerprints. */
+  digest: z.string(),
+  machine: z.string(),
+  uniqueSessions: z.number().int().nonnegative(),
+  candidateFiles: z.number().int().nonnegative(),
+  earliestSessionAt: z.number().int().nonnegative().optional(),
+  lastIndexedAt: z.number().int().nonnegative().optional(),
+  indexing: z.boolean(),
+  sources: z.array(usageHistorySourceDigestSchema),
+});
+export type UsageHistoryDigest = z.infer<typeof usageHistoryDigestSchema>;
+
+export const usageHistorySessionSummarySchema = z.object({
+  sessionId: z.string(),
+  sourceId: z.string(),
+  machine: z.string(),
+  fileSize: z.number().int().nonnegative(),
+  modifiedAt: z.number().int().nonnegative(),
+  fingerprint: z.string(),
+  startedAt: z.number().int().nonnegative().optional(),
+  tokens: usageTokensSchema,
+  reasoningTokens: z.number().nonnegative().optional(),
+  estimatedCostUsd: z.number().nonnegative(),
+  history: usageHistorySchema.optional(),
+});
+export type UsageHistorySessionSummary = z.infer<typeof usageHistorySessionSummarySchema>;
+
+export const usageHistoryDigestPayloadSchema = z.object({
+  providerId: z.string().min(1),
+});
+export type UsageHistoryDigestPayload = z.infer<typeof usageHistoryDigestPayloadSchema>;
+
+export const usageHistoryPagePayloadSchema = z.object({
+  providerId: z.string().min(1),
+  cursor: z.string().optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+  sourceIds: z.array(z.string()).optional(),
+});
+export type UsageHistoryPagePayload = z.infer<typeof usageHistoryPagePayloadSchema>;
+
+export interface UsageHistoryPageResponse {
+  digest: string;
+  sessions: UsageHistorySessionSummary[];
+  nextCursor?: string;
+}
+
+export const refreshUsageHistoryPayloadSchema = z.object({
+  providerId: z.string().min(1),
+  sourceId: z.string().optional(),
+});
+export type RefreshUsageHistoryPayload = z.infer<typeof refreshUsageHistoryPayloadSchema>;
+
+/** Provider-neutral aggregate returned by a history indexer. */
+export interface UsageHistoryAggregate {
+  tokens: UsageTokens;
+  reasoningTokens?: number;
+  estimatedCostUsd: number;
+  history?: UsageHistory;
 }
 
 export const usageLoginPayloadSchema = z.object({

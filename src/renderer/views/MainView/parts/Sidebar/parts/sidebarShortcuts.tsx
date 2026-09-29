@@ -1,4 +1,4 @@
-import { CalendarClock, GitPullRequest, Workflow } from "lucide-react";
+import { CalendarClock, Workflow } from "lucide-react";
 import { startTransition, type ReactNode } from "react";
 import { useLingui } from "@lingui/react/macro";
 import { useCurrentProjectId } from "@/renderer/hooks/uiSelectors";
@@ -26,7 +26,6 @@ export function useSidebarShortcuts(): SidebarShortcutEntry[] {
   const sidebarHiddenShortcuts = useSharedSettings((s) => s.sidebarHiddenShortcuts);
   const sidebarShortcutOrder = useSharedSettings((s) => s.sidebarShortcutOrder);
   const appView = useAppStore((s) => s.view);
-  const openPullRequests = useAppStore((s) => s.openPullRequests);
   const openGitHubActions = useAppStore((s) => s.openGitHubActions);
   const openSchedules = useAppStore((s) => s.openSchedules);
   const githubActionsOpen = usePanelStore((s) => s.githubActionsContext !== null);
@@ -35,15 +34,6 @@ export function useSidebarShortcuts(): SidebarShortcutEntry[] {
     SidebarShortcutEntry["id"],
     Omit<SidebarShortcutEntry, "isActive">
   >([
-    [
-      "pullRequests",
-      {
-        id: "pullRequests",
-        icon: <GitPullRequest className="size-4" />,
-        label: t`Pull requests`,
-        onPress: () => startTransition(() => openPullRequests()),
-      },
-    ],
     [
       "githubActions",
       {

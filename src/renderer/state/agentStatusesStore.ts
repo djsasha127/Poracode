@@ -267,7 +267,6 @@ export const useAgentStatusesStore = create<AgentStatusesStore>()(
       version: 33,
       // v33 mirrors supervisor STATUS_CACHE_VERSION=36: re-probe account catalogs
       // that previously read the isolated session database.
-
       migrate: (persisted) => {
         const prev = (persisted ?? {}) as Partial<AgentStatusesStore>;
         return {

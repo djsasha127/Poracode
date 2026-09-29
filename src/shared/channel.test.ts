@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   appIdFor,
   artifactPrefixFor,
+  electronUserDataDirNameFor,
   PORACODE_CHANNELS,
   productNameFor,
   updaterChannelFor,
@@ -26,6 +27,8 @@ describe("channel", () => {
   it("returns the right user data dir names", () => {
     expect(userDataDirNameFor("stable")).toBe(".poracode");
     expect(userDataDirNameFor("nightly")).toBe(".poracode-nightly");
+    expect(electronUserDataDirNameFor("stable")).toBe("poracode");
+    expect(electronUserDataDirNameFor("nightly")).toBe("poracode-nightly");
   });
 
   it("only returns a published channel name for nightly", () => {

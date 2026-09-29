@@ -317,6 +317,7 @@ describe("mapCodexNotification — usage.spent", () => {
         usage: {
           counterKind: "cumulative",
           counter: 11_839,
+          breakdown: { input: 11_833, output: 6, cacheRead: 0 },
           scopeId: "codex-thread-1",
           epoch: 0,
           fresh: true,
@@ -334,7 +335,13 @@ describe("mapCodexNotification — usage.spent", () => {
     const spent = spentEventOf(state, {
       threadId: "codex-thread-1",
       token_usage: {
-        total_token_usage: { total_tokens: 5_000, input_tokens: 4_000, output_tokens: 1_000 },
+        total_token_usage: {
+          total_tokens: 5_000,
+          input_tokens: 4_000,
+          cached_input_tokens: 500,
+          cache_write_tokens: 100,
+          output_tokens: 1_000,
+        },
         last_token_usage: { total_tokens: 42 },
         model_context_window: 200_000,
       },
@@ -346,6 +353,7 @@ describe("mapCodexNotification — usage.spent", () => {
       usage: {
         counterKind: "cumulative",
         counter: 5_000,
+        breakdown: { input: 3_400, output: 1_000, cacheRead: 500, cacheWrite: 100 },
         scopeId: "codex-thread-1",
         epoch: 0,
         sampleId: "codex-thread-1:0:5000",

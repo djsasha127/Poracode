@@ -150,6 +150,8 @@ export const dbSyncAllPayloadSchema = z.object({
   projects: z.array(projectSchema),
   threads: z.array(persistedThreadSchema),
   viewJson: z.string(),
+  baseProjects: z.array(projectSchema).optional(),
+  baseThreads: z.array(persistedThreadSchema).optional(),
 });
 export const dbPersistExperimentStatePayloadSchema = z.object({
   upsertThreads: z.array(

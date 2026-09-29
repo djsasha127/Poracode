@@ -5,7 +5,7 @@ import {
   type RemoteSettings,
   type RemoteSettingsPatch,
 } from "@/shared/remote";
-import type { SharedSettingsInput } from "@/shared/settings";
+import type { SharedSettings, SharedSettingsInput } from "@/shared/settings";
 
 /**
  * Two-way sync for the desktop's remote-editable settings (AI helpers,
@@ -41,7 +41,11 @@ export function applyDesktopSettings(settings: RemoteSettings): void {
   // before that edit; let the push response win instead of flip-flopping.
   if (pendingPushes > 0) return;
   desktopSettings = settings;
-  applyExternalSharedSettings(settings);
+  applyExternalSharedSettings(
+    Object.fromEntries(
+      Object.entries(settings).filter(([key, value]) => key !== "usage" && value !== undefined),
+    ) as Partial<SharedSettings>,
+  );
 }
 
 /** Forget the synced snapshot (disconnect / switching desktops). */
@@ -63,6 +67,13 @@ export function pushDesktopSettingsDiff(
   const patch: RemoteSettingsPatch = {};
   const merged: RemoteSettings = { ...synced };
   for (const key of REMOTE_SETTINGS_KEYS) {
+    // Usage includes both host-side collection and device-local presentation
+    // preferences. Archive management uses an explicit host picker in the
+    // desktop settings UI instead of mirroring the entire group into the PWA.
+    if (key === "usage") continue;
+    // An omitted optional group is a capability signal from an older helper;
+    // do not echo the PWA default back as an unsupported settings patch.
+    if (synced[key] === undefined) continue;
     if (settingChanged(settings[key], synced[key])) {
       (patch as Record<string, unknown>)[key] = settings[key];
       (merged as Record<string, unknown>)[key] = settings[key];

@@ -45,6 +45,21 @@ describe("museAuthJsonIsAuthenticated", () => {
     ).toBe(true);
   });
 
+  it("rejects a keychain-only provider when the process cannot access Keychain", () => {
+    const keychainAuth = JSON.stringify({
+      schema_version: 1,
+      providers: { meta: { obtained_via: "device_code", storage: "keychain" } },
+    });
+    const fileAuth = JSON.stringify({
+      schema_version: 1,
+      providers: { meta: { obtained_via: "device_code", access_token: "present" } },
+    });
+
+    expect(museAuthJsonIsAuthenticated(keychainAuth)).toBe(true);
+    expect(museAuthJsonIsAuthenticated(keychainAuth, { keychainAvailable: false })).toBe(false);
+    expect(museAuthJsonIsAuthenticated(fileAuth, { keychainAvailable: false })).toBe(true);
+  });
+
   it("returns false when providers is empty or missing", () => {
     expect(museAuthJsonIsAuthenticated(JSON.stringify({ schema_version: 1, providers: {} }))).toBe(
       false,
@@ -65,13 +80,19 @@ describe("museHasStoredCredentials (temp dir, never touches ~/.config/muse)", ()
   let configRoot: string;
   let previousXdg: string | undefined;
   let previousAuthPath: string | undefined;
+  let previousSshConnection: string | undefined;
+  let previousSshTty: string | undefined;
   const location = { kind: "posix", path: "/tmp/muse-proj" } as ProjectLocation;
 
   beforeEach(() => {
     configRoot = mkdtempSync(join(tmpdir(), "muse-config-"));
     previousXdg = process.env["XDG_CONFIG_HOME"];
     previousAuthPath = process.env["MUSE_AUTH_PATH"];
+    previousSshConnection = process.env["SSH_CONNECTION"];
+    previousSshTty = process.env["SSH_TTY"];
     delete process.env["MUSE_AUTH_PATH"];
+    delete process.env["SSH_CONNECTION"];
+    delete process.env["SSH_TTY"];
     process.env["XDG_CONFIG_HOME"] = configRoot;
   });
 
@@ -80,6 +101,10 @@ describe("museHasStoredCredentials (temp dir, never touches ~/.config/muse)", ()
     else process.env["XDG_CONFIG_HOME"] = previousXdg;
     if (previousAuthPath === undefined) delete process.env["MUSE_AUTH_PATH"];
     else process.env["MUSE_AUTH_PATH"] = previousAuthPath;
+    if (previousSshConnection === undefined) delete process.env["SSH_CONNECTION"];
+    else process.env["SSH_CONNECTION"] = previousSshConnection;
+    if (previousSshTty === undefined) delete process.env["SSH_TTY"];
+    else process.env["SSH_TTY"] = previousSshTty;
     rmSync(configRoot, { recursive: true, force: true });
   });
 
@@ -105,6 +130,34 @@ describe("museHasStoredCredentials (temp dir, never touches ~/.config/muse)", ()
         providers: { meta: { obtained_via: "login" } },
       }),
     );
+    expect(museHasStoredCredentials(location)).toBe(true);
+  });
+
+  it("reports keychain-only credentials missing in an SSH session", () => {
+    mkdirSync(join(configRoot, "muse"), { recursive: true });
+    writeFileSync(
+      join(configRoot, "muse", "auth.json"),
+      JSON.stringify({
+        schema_version: 1,
+        providers: { meta: { obtained_via: "device_code", storage: "keychain" } },
+      }),
+    );
+    process.env["SSH_CONNECTION"] = "remote";
+
+    expect(museHasStoredCredentials(location)).toBe(false);
+  });
+
+  it("reports file-backed credentials authenticated in an SSH session", () => {
+    mkdirSync(join(configRoot, "muse"), { recursive: true });
+    writeFileSync(
+      join(configRoot, "muse", "auth.json"),
+      JSON.stringify({
+        schema_version: 1,
+        providers: { meta: { obtained_via: "device_code", access_token: "present" } },
+      }),
+    );
+    process.env["SSH_CONNECTION"] = "remote";
+
     expect(museHasStoredCredentials(location)).toBe(true);
   });
 

@@ -56,7 +56,12 @@ import { BufferedLogWriter } from "./bufferedLogWriter";
 import type { QueuedStructuredTurn, SessionRuntime, ShellSessionRuntime } from "./sessionTypes";
 import { effectiveProjectLocation } from "./sessionTypes";
 import { ThreadOutputPipeline, resolveThreadStatusSource } from "./threadOutputPipeline";
-import { rewriteSegmentsForWorkspace, rewriteSegmentsForWsl } from "./threadAttachments";
+import {
+  prepareStructuredAttachmentSegments,
+  rewriteSegmentsForWorkspace,
+  rewriteSegmentsForWsl,
+  validateAttachmentSegments,
+} from "./threadAttachments";
 
 import {
   isInterruptibleBusyStatus,
@@ -86,6 +91,7 @@ import {
 import { StructuredTurnQueue } from "./threadSession/structuredTurnQueue";
 import { StructuredFailureReporter } from "./threadSession/structuredFailureReporter";
 import { readSupervisorSharedSettings } from "./supervisorSharedSettings";
+import { SharedThreadLeaseManager } from "./sharedThreadLease";
 
 export { isUserInterruptKeystroke, USER_INTERRUPT_RECOVERY_GRACE_MS, writeSubmittedPrompt };
 export type { ThreadSessionManagerOptions };
@@ -111,6 +117,7 @@ export class ThreadSessionManager {
   readonly shellSessions = new Map<string, ShellSessionRuntime>();
   /** Reverse index: agent-native session id → SessionRuntime, for CLI hook routing fallback. */
   readonly sessionsBySessionId = new Map<string, SessionRuntime>();
+  private readonly sharedThreadLeases = new SharedThreadLeaseManager();
   private readonly startLocks = new Map<string, Promise<void>>();
   private readonly pendingStartInterrupts = new Set<string>();
   private readonly pendingStartAborts = new Set<string>();
@@ -708,6 +715,8 @@ export class ThreadSessionManager {
     const isSessionReplacement = currentSession !== undefined;
     if (isSessionReplacement) {
       this.followUpQueue.beginSessionReplacement(threadId);
+    } else {
+      this.sharedThreadLeases.acquire(threadId);
     }
     this.recentlyRemovedThreadIds.delete(threadId);
 
@@ -733,6 +742,7 @@ export class ThreadSessionManager {
     } finally {
       this.startLocks.delete(threadId);
       if (!this.sessions.has(threadId)) {
+        this.sharedThreadLeases.release(threadId);
         this.pendingStartInterrupts.delete(threadId);
         this.pendingStartAborts.delete(threadId);
       }
@@ -767,8 +777,12 @@ export class ThreadSessionManager {
       const mentionSegments = payload.segments
         ? resolveThreadMentionSegments(payload.segments)
         : undefined;
-      const wslSegments = mentionSegments
-        ? await rewriteSegmentsForWsl(mentionSegments, session.projectLocation, {
+      if (!usesStructuredFlow) await validateAttachmentSegments(mentionSegments);
+      const preparedSegments = usesStructuredFlow
+        ? await prepareStructuredAttachmentSegments(mentionSegments)
+        : mentionSegments;
+      const wslSegments = preparedSegments
+        ? await rewriteSegmentsForWsl(preparedSegments, session.projectLocation, {
             preserveImageAttachments:
               usesStructuredFlow &&
               session.adapter.capabilities.readsImageAttachmentsFromHost !== false,
@@ -829,11 +843,38 @@ export class ThreadSessionManager {
       // server-controlled OR this thread was launched in chat mode (the
       // structured session owns input/output instead of the PTY).
       if (usesStructuredFlow && session.structuredSession?.startTurn) {
+        const hasQueuedInput =
+          this.followUpQueue.getThreadFollowUpQueue(session.threadId) !== null ||
+          session.pendingSteer !== undefined;
         // GUI threads route submit-while-working through the pending-steer
         // path. Renderers should call `setPendingSteer` directly for that case;
         // any `sendThreadInput` that lands here while working is treated as a
         // steer (replace-latest) for backwards compatibility.
         if (session.presentationMode === "gui" && session.status === "working") {
+          // Agent-to-agent callers use `auto`: native non-interrupting steer is
+          // preferred only when it cannot jump an existing FIFO item. Explicit
+          // queue, unavailable steer, or an occupied queue all retain FIFO.
+          if (
+            payload.deliveryPolicy === "auto" &&
+            !hasQueuedInput &&
+            session.structuredSession.steerTurn
+          ) {
+            directInput.markStarted(session);
+            await this.steerCoordinator.steerStructuredTurn(session, turn);
+            return;
+          }
+          if (payload.deliveryPolicy === "auto" || payload.deliveryPolicy === "queue") {
+            await this.followUpQueue.queueThreadFollowUp({
+              threadId: payload.threadId,
+              prompt: payload.prompt,
+              config: payload.config,
+              ...(payload.segments ? { segments: payload.segments } : {}),
+              ...(payload.userMessageItemId
+                ? { userMessageItemId: payload.userMessageItemId }
+                : {}),
+            });
+            return;
+          }
           // Capability-based: sessions that support non-interrupting steer enqueue
           // the message onto the running turn (subagents survive); others fall
           // back to the interrupt-drain pending-steer path.
@@ -1046,6 +1087,7 @@ export class ThreadSessionManager {
     const mentionSegments = payload.segments
       ? resolveThreadMentionSegments(payload.segments)
       : undefined;
+    await validateAttachmentSegments(mentionSegments);
     const wslSegments = mentionSegments
       ? await rewriteSegmentsForWsl(mentionSegments, session.projectLocation, {
           preserveImageAttachments: false,
@@ -1286,6 +1328,7 @@ export class ThreadSessionManager {
         this.pendingStartAborts.add(payload.threadId);
         this.rememberRemovedThread(payload.threadId);
       }
+      if (!this.startLocks.has(payload.threadId)) this.sharedThreadLeases.release(payload.threadId);
       return;
     }
 
@@ -1308,12 +1351,16 @@ export class ThreadSessionManager {
     this.runtimeEventRouter.clearAllForThread(payload.threadId);
     this.options.crossagentMcp?.cancelAll(payload.threadId);
     this.options.crossagentMcp?.unregister(payload.threadId);
-    await existing.structuredSession?.dispose();
-    if (existing.structuredSession) {
-      await sleep(150);
+    try {
+      await existing.structuredSession?.dispose();
+      if (existing.structuredSession) {
+        await sleep(150);
+      }
+      this.ptyLifecycle.kill(existing);
+      await this.ptyLifecycle.waitForExit(existing);
+    } finally {
+      this.sharedThreadLeases.release(payload.threadId);
     }
-    this.ptyLifecycle.kill(existing);
-    await this.ptyLifecycle.waitForExit(existing);
   }
 
   async startShell(payload: StartShellPayload): Promise<void> {
@@ -1495,6 +1542,7 @@ export class ThreadSessionManager {
     );
     this.sessions.clear();
     this.sessionsBySessionId.clear();
+    this.sharedThreadLeases.releaseAll();
 
     for (const shell of this.shellSessions.values()) {
       shell.ignoreExit = true;

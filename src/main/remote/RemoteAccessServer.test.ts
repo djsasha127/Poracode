@@ -927,6 +927,7 @@ describe("RemoteAccessServer", () => {
       desktopId: "desktop-test",
       label: "Test Desktop",
       appVersion: "1.0.0",
+      capabilities: { usageHistory: 1 },
       platform:
         process.platform === "win32" ||
         process.platform === "darwin" ||
@@ -2825,6 +2826,145 @@ describe("RemoteAccessServer", () => {
     });
   });
 
+  it("forwards explicitly requested provider usage ids to the supervisor", async () => {
+    const callSupervisor = vi.fn<RemoteAccessServerOptions["callSupervisor"]>(async (name) => {
+      if (name === "getProviderUsage") {
+        return { snapshots: [], fromCache: false } as never;
+      }
+      throw new Error(`unexpected supervisor call: ${name}`);
+    });
+    const server = new RemoteAccessServer({
+      appVersion: "1.0.0",
+      identity: { desktopId: "desktop-test", label: "Test Desktop" },
+      host: "127.0.0.1",
+      port: 0,
+      callSupervisor,
+    });
+    servers.push(server);
+    const info = await server.start();
+    const token = await issueAccessToken(info, ["session:read"]);
+    const url = new URL("/api/provider-usage", info.httpBaseUrl);
+    url.searchParams.append("providerId", "claude");
+    url.searchParams.append("providerId", "muse");
+
+    const response = await fetch(url, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ snapshots: [], fromCache: false });
+    expect(callSupervisor).toHaveBeenCalledWith("getProviderUsage", {
+      providerIds: ["claude", "muse"],
+    });
+  });
+
+  it("serves paginated usage history with read scope and protects rescans with operate scope", async () => {
+    const digest = {
+      providerId: "codex",
+      indexVersion: 1,
+      digest: "digest-1",
+      machine: "server",
+      uniqueSessions: 0,
+      candidateFiles: 0,
+      indexing: false,
+      sources: [],
+    };
+    const callSupervisor = vi.fn<RemoteAccessServerOptions["callSupervisor"]>(async (name) => {
+      if (name === "getUsageHistoryDigest" || name === "refreshUsageHistory") {
+        return digest as never;
+      }
+      if (name === "getUsageHistoryPage") {
+        return { digest: "digest-1", sessions: [] } as never;
+      }
+      throw new Error(`unexpected supervisor call: ${name}`);
+    });
+    const server = new RemoteAccessServer({
+      appVersion: "1.0.0",
+      identity: { desktopId: "desktop-test", label: "Test Desktop" },
+      host: "127.0.0.1",
+      port: 0,
+      callSupervisor,
+    });
+    servers.push(server);
+    const info = await server.start();
+    const token = await issueAccessToken(info, ["session:read", "session:operate"]);
+
+    const digestUrl = new URL("/api/usage-history/digest?providerId=codex", info.httpBaseUrl);
+    expect((await fetch(digestUrl)).status).toBe(401);
+    expect((await fetch(digestUrl, { headers: { authorization: `Bearer ${token}` } })).status).toBe(
+      200,
+    );
+
+    const pageUrl = new URL(
+      "/api/usage-history/page?providerId=codex&cursor=0&limit=100&sourceId=ext",
+      info.httpBaseUrl,
+    );
+    expect((await fetch(pageUrl, { headers: { authorization: `Bearer ${token}` } })).status).toBe(
+      200,
+    );
+
+    const refreshRequest = (accessToken?: string) =>
+      fetch(new URL("/api/usage-history/refresh", info.httpBaseUrl), {
+        method: "POST",
+        headers: {
+          ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ providerId: "codex", sourceId: "ext" }),
+      });
+    expect((await refreshRequest()).status).toBe(401);
+    expect((await refreshRequest(token)).status).toBe(200);
+    expect(callSupervisor).toHaveBeenCalledWith("getUsageHistoryDigest", {
+      providerId: "codex",
+    });
+    expect(callSupervisor).toHaveBeenCalledWith("getUsageHistoryPage", {
+      providerId: "codex",
+      cursor: "0",
+      limit: 100,
+      sourceIds: ["ext"],
+    });
+    expect(callSupervisor).toHaveBeenCalledWith("refreshUsageHistory", {
+      providerId: "codex",
+      sourceId: "ext",
+    });
+  });
+
+  it("forwards provider API keys only with session operate scope", async () => {
+    const callSupervisor = vi.fn<RemoteAccessServerOptions["callSupervisor"]>(async (name) => {
+      if (name === "setProviderUsageApiKey") return { ok: true } as never;
+      throw new Error(`unexpected supervisor call: ${name}`);
+    });
+    const server = new RemoteAccessServer({
+      appVersion: "1.0.0",
+      identity: { desktopId: "desktop-test", label: "Test Desktop" },
+      host: "127.0.0.1",
+      port: 0,
+      callSupervisor,
+    });
+    servers.push(server);
+    const info = await server.start();
+    const operateToken = await issueAccessToken(info, ["session:operate"]);
+    const request = (token?: string) =>
+      fetch(new URL("/api/provider-usage/api-key", info.httpBaseUrl), {
+        method: "POST",
+        headers: {
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ providerId: "kimi", apiKey: "kimi-test-key" }),
+      });
+
+    expect((await request()).status).toBe(401);
+    const response = await request(operateToken);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(callSupervisor).toHaveBeenCalledTimes(1);
+    expect(callSupervisor).toHaveBeenCalledWith("setProviderUsageApiKey", {
+      providerId: "kimi",
+      apiKey: "kimi-test-key",
+    });
+  });
+
   it("rate limits pairing token exchange attempts", async () => {
     const server = new RemoteAccessServer({
       appVersion: "1.0.0",
@@ -2910,10 +3050,22 @@ describe("RemoteAccessServer", () => {
     expect(ready).toMatchObject({ type: "ready", seq: 0 });
 
     // Chatty events no remote client consumes must not advance the seq or reach
-    // the socket; the next consumed event should arrive at seq 1.
+    // the socket; remote-host usage is consumed by desktop SSH clients.
     server.publishSupervisorEvent({ type: "git-changed", projectId: "project-1" });
     server.publishSupervisorEvent({ type: "project-tree-changed", projectId: "project-1" });
     server.publishSupervisorEvent({ type: "lsp-message", sessionId: "lsp-1", message: {} });
+
+    const usage = {
+      type: "provider-usage",
+      snapshot: {
+        providerId: "claude",
+        status: "ok",
+        windows: [{ id: "weekly", label: "Weekly", usedPercent: 21 }],
+        fetchedAt: 123,
+      },
+    } satisfies SupervisorEvent;
+    server.publishSupervisorEvent(usage);
+    expect(await readWsMessage(ws)).toMatchObject({ type: "event", seq: 1, event: usage });
 
     const consumed = {
       type: "thread-state",
@@ -2924,7 +3076,7 @@ describe("RemoteAccessServer", () => {
     } satisfies SupervisorEvent;
     server.publishSupervisorEvent(consumed);
 
-    expect(await readWsMessage(ws)).toMatchObject({ type: "event", seq: 1, event: consumed });
+    expect(await readWsMessage(ws)).toMatchObject({ type: "event", seq: 2, event: consumed });
     ws.close();
   });
 
@@ -5030,6 +5182,12 @@ describe("RemoteAccessServer", () => {
         titleGenProvider: "claude",
         titleGenModel: "claude-haiku-4-5-20251001",
         enabledMcpServers: { browser: true, crossagents: true },
+        usage: {
+          ...defaultSharedSettings.usage,
+          historySources: {
+            codex: [{ id: "ext", name: "EXT", path: "/archive/codex", enabled: true }],
+          },
+        },
         // Unknown keys are stripped by the schema, not persisted.
         providerConfigs: { evil: true },
       }),
@@ -5040,12 +5198,23 @@ describe("RemoteAccessServer", () => {
         titleGenProvider: "claude",
         titleGenModel: "claude-haiku-4-5-20251001",
         enabledMcpServers: { browser: true, crossagents: true },
+        usage: {
+          historySources: {
+            codex: [{ id: "ext", name: "EXT", path: "/archive/codex", enabled: true }],
+          },
+        },
       },
     });
     expect(update).toHaveBeenCalledWith({
       titleGenProvider: "claude",
       titleGenModel: "claude-haiku-4-5-20251001",
       enabledMcpServers: { browser: true, crossagents: true },
+      usage: {
+        ...defaultSharedSettings.usage,
+        historySources: {
+          codex: [{ id: "ext", name: "EXT", path: "/archive/codex", enabled: true }],
+        },
+      },
     });
     expect(stored.titleGenProvider).toBe("claude");
     expect(stored.enabledMcpServers).toEqual({ browser: true, crossagents: true });

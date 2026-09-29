@@ -68,7 +68,7 @@ export interface ThreadSlice {
    */
   mcpLaunchCustomServerNamesByThreadId: Record<string, readonly string[]>;
   setThreadMcpLaunchCustomServerNames: (threadId: string, names: readonly string[]) => void;
-  markThreadsInactiveOnLaunch: () => void;
+  markThreadsInactiveOnLaunch: (threadIds?: ReadonlySet<string>) => void;
   createThread: (input: {
     threadId?: string;
     projectId: string;
@@ -193,11 +193,14 @@ export const createThreadSlice: SliceCreator<ThreadSlice> = (set) => ({
         [threadId]: names,
       },
     })),
-  markThreadsInactiveOnLaunch: () =>
+  markThreadsInactiveOnLaunch: (threadIds) =>
     set((state) => {
       let changed = false;
 
       const threads = state.threads.map((thread) => {
+        if (threadIds && !threadIds.has(thread.id)) {
+          return thread;
+        }
         if (thread.status === "inactive" || thread.status === "error") {
           return thread;
         }
@@ -213,11 +216,25 @@ export const createThreadSlice: SliceCreator<ThreadSlice> = (set) => ({
       const hasLaunchState =
         Object.keys(state.runtimeLaunchConfigByThreadId).length > 0 ||
         Object.keys(state.threadMentionToolsAvailableByThreadId).length > 0;
+      const runtimeLaunchConfigByThreadId = threadIds
+        ? Object.fromEntries(
+            Object.entries(state.runtimeLaunchConfigByThreadId).filter(
+              ([id]) => !threadIds.has(id),
+            ),
+          )
+        : {};
+      const threadMentionToolsAvailableByThreadId = threadIds
+        ? Object.fromEntries(
+            Object.entries(state.threadMentionToolsAvailableByThreadId).filter(
+              ([id]) => !threadIds.has(id),
+            ),
+          )
+        : {};
       return changed || hasLaunchState
         ? {
             threads,
-            runtimeLaunchConfigByThreadId: {},
-            threadMentionToolsAvailableByThreadId: {},
+            runtimeLaunchConfigByThreadId,
+            threadMentionToolsAvailableByThreadId,
           }
         : {};
     }),
@@ -610,9 +627,15 @@ export const createThreadSlice: SliceCreator<ThreadSlice> = (set) => ({
 
         const sessionRefChanged =
           input.sessionRef !== undefined &&
-          thread.sessionRef?.providerSessionId !== input.sessionRef.providerSessionId;
+          (thread.sessionRef?.providerSessionId !== input.sessionRef.providerSessionId ||
+            (input.sessionRef.providerCursor !== undefined &&
+              thread.sessionRef?.providerCursor !== input.sessionRef.providerCursor));
         const nextSessionRef =
-          input.sessionRef && sessionRefChanged ? input.sessionRef : thread.sessionRef;
+          input.sessionRef && sessionRefChanged
+            ? thread.sessionRef?.providerSessionId === input.sessionRef.providerSessionId
+              ? { ...thread.sessionRef, providerCursor: input.sessionRef.providerCursor }
+              : input.sessionRef
+            : thread.sessionRef;
 
         const statusSourceMatch =
           input.threadStatusSource === undefined ||
@@ -1007,7 +1030,18 @@ export const createThreadSlice: SliceCreator<ThreadSlice> = (set) => ({
           const sessionRefChanged =
             (thread.sessionRef?.providerSessionId ?? "") !==
               (snapshot.sessionRef?.providerSessionId ?? "") ||
-            (thread.sessionRef?.discoveredAt ?? "") !== (snapshot.sessionRef?.discoveredAt ?? "");
+            (snapshot.sessionRef?.providerCursor !== undefined &&
+              thread.sessionRef?.providerCursor !== snapshot.sessionRef.providerCursor);
+          const nextSessionRef = snapshot.sessionRef
+            ? thread.sessionRef?.providerSessionId === snapshot.sessionRef.providerSessionId
+              ? {
+                  ...thread.sessionRef,
+                  ...(snapshot.sessionRef.providerCursor
+                    ? { providerCursor: snapshot.sessionRef.providerCursor }
+                    : {}),
+                }
+              : snapshot.sessionRef
+            : thread.sessionRef;
 
           const configFromRuntime = runtimeConfigChanged ? snapshot.config : undefined;
           const nextConfig =
@@ -1057,7 +1091,7 @@ export const createThreadSlice: SliceCreator<ThreadSlice> = (set) => ({
               ? { threadStatusSource: snapshot.threadStatusSource }
               : {}),
             ...(snapshot.errorMessage !== undefined ? { errorMessage: snapshot.errorMessage } : {}),
-            ...(snapshot.sessionRef ? { sessionRef: snapshot.sessionRef } : {}),
+            ...(nextSessionRef ? { sessionRef: nextSessionRef } : {}),
             ...(snapshot.slashCommands !== undefined
               ? { slashCommands: snapshot.slashCommands }
               : {}),

@@ -4,21 +4,30 @@ import { ChevronDown, ChevronRight, GripVertical, LogOut, RefreshCw } from "luci
 import { Trans, useLingui } from "@lingui/react/macro";
 import { usageWindowDisplayLabel } from "@poracode/agents-usage/formatters";
 import type { UsageSnapshot } from "@poracode/agents-usage/types";
+import type { ProfileTokenBreakdown, ProfileTokenProvider } from "@/shared/contracts";
 import { ProviderIcon } from "@/renderer/components/providers/ProviderIcon";
 import { UsageWindowBars } from "@/renderer/components/providers/UsageWindowBars";
 import { UsageCostLine } from "@/renderer/components/providers/UsageCostLine";
+import { UsageHistoryPanelExtension } from "@/renderer/components/providers/usageHistoryExtensions";
 import {
   formatCreditBalance,
+  formatEstimatedMoney,
+  formatTokens,
   formatWindowValue,
   hasDisplayableCredits,
   sharedWindowResetLabel,
   usageStatusText,
 } from "@/renderer/components/providers/usageFormat";
 import { usageToneColor } from "@/renderer/components/providers/usageTone";
-import { usesSharedWindowReset } from "@/renderer/components/providers/usageProviders";
+import {
+  supportsApiKeyLogin,
+  usesSharedWindowReset,
+} from "@/renderer/components/providers/usageProviders";
 import { useProviderUsageRefresh } from "@/renderer/components/providers/useProviderUsageRefresh";
 import { useUsageProviderLogin } from "@/renderer/components/providers/useUsageProviderLogin";
 import { useProviderUsage } from "@/renderer/state/providerUsageStore";
+import { useRemoteServersStore } from "@/renderer/state/remoteServersStore";
+import { hasScannedTokenHistory } from "../recordedUsageSource";
 
 /** Compact one-line window chips shown when the card is collapsed. */
 function WindowChips(props: {
@@ -67,22 +76,110 @@ function PlanLabel(props: { plan: string; account?: string }) {
   );
 }
 
+function RecordedTokenCost(props: {
+  usage: ProfileTokenProvider;
+  pricingReviewedAt?: string;
+  sourceLabel?: string;
+  compact?: boolean;
+}) {
+  const { t } = useLingui();
+  const { usage } = props;
+  const exactTokens = new Intl.NumberFormat().format(Math.round(usage.tokens));
+  const money = formatEstimatedMoney(usage.estimatedCostUsd);
+  const unpricedTokens = Math.max(0, usage.tokens - (usage.pricedTokens ?? 0));
+
+  if (props.compact) {
+    return (
+      <span className="flex items-center gap-1 whitespace-nowrap text-xs">
+        <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-accent" />
+        <span className="text-muted">
+          {t`Tokens`}
+          {props.sourceLabel ? ` · ${props.sourceLabel}` : ""}
+        </span>
+        <span className="tabular-nums text-foreground" title={exactTokens}>
+          {formatTokens(usage.tokens)}
+          {money ? ` · ~${money}` : ""}
+        </span>
+      </span>
+    );
+  }
+
+  const categories: Array<{ key: keyof ProfileTokenBreakdown; label: string; tokens: number }> =
+    usage.breakdown
+      ? [
+          { key: "input" as const, label: t`Input`, tokens: usage.breakdown.input },
+          { key: "output" as const, label: t`Output`, tokens: usage.breakdown.output },
+          { key: "cacheRead" as const, label: t`Cache read`, tokens: usage.breakdown.cacheRead },
+          { key: "cacheWrite" as const, label: t`Cache write`, tokens: usage.breakdown.cacheWrite },
+        ].filter((entry) => entry.tokens > 0)
+      : [];
+
+  return (
+    <div className="space-y-1.5 border-t border-[color:var(--separator)] pt-2">
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="text-muted">
+          {t`Recorded tokens`}
+          {props.sourceLabel ? ` · ${props.sourceLabel}` : ""}
+        </span>
+        <span className="tabular-nums text-foreground" title={exactTokens}>
+          {formatTokens(usage.tokens)}
+        </span>
+      </div>
+      {money ? (
+        <div className="flex items-center justify-between gap-3 text-xs">
+          <span className="text-muted">{t`All-time API equivalent`}</span>
+          <span className="tabular-nums font-medium text-foreground">~{money}</span>
+        </div>
+      ) : null}
+      {categories.length > 0 ? (
+        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] text-muted/80">
+          {categories.map((entry) => {
+            const categoryCost = usage.costBreakdownUsd?.[entry.key];
+            return (
+              <span key={entry.key} className="truncate tabular-nums">
+                {entry.label} {formatTokens(entry.tokens)}
+                {categoryCost ? ` → ${formatEstimatedMoney(categoryCost)}` : ""}
+              </span>
+            );
+          })}
+        </div>
+      ) : null}
+      <p className="text-[10px] leading-tight text-muted/60">
+        {unpricedTokens > 0
+          ? t`${formatTokens(unpricedTokens)} tokens have no known public model rate.`
+          : t`Estimated at public API rates; your subscription is not charged this amount.`}
+        {props.pricingReviewedAt ? ` · ${t`Rates ${props.pricingReviewedAt}`}` : ""}
+      </p>
+    </div>
+  );
+}
+
 export function UsageProviderCard(props: {
   id: string;
   label: string;
   index: number;
   collapsed: boolean;
   onToggleCollapse: (id: string) => void;
+  snapshot: UsageSnapshot | undefined;
+  recordedUsage?: ProfileTokenProvider;
+  recordedUsageSourceLabel?: string;
+  pricingReviewedAt?: string;
+  onRefreshRecordedUsage?: () => Promise<unknown>;
+  remoteServerId?: string;
+  sourceLabel?: string;
+  historyRemoteServerId?: string;
+  historyRemoteSourceLabel?: string;
 }) {
-  const { id, label, index, collapsed, onToggleCollapse } = props;
+  const { id, label, index, collapsed, onToggleCollapse, remoteServerId, sourceLabel } = props;
   const { t } = useLingui();
-  const snapshot = useProviderUsage(id);
+  const localSnapshot = useProviderUsage(id);
+  const snapshot = remoteServerId ? props.snapshot : localSnapshot;
   const {
     canBrowserSignIn,
     canApiKeySignIn,
     canCliSignIn,
     canSignOut,
-    signingIn,
+    signingIn: localSigningIn,
     signingOut,
     apiKey,
     setApiKey,
@@ -91,10 +188,47 @@ export function UsageProviderCard(props: {
     handleSubmitApiKey,
     handleSignOut,
   } = useUsageProviderLogin(id);
-  const { refreshing, refresh } = useProviderUsageRefresh(id);
-  const onSubmitApiKey = (event: FormEvent) => {
+  const { refreshing: localRefreshing, refresh: refreshLocal } = useProviderUsageRefresh(id);
+  const [remoteRefreshing, setRemoteRefreshing] = useState(false);
+  const [remoteSigningIn, setRemoteSigningIn] = useState(false);
+  const [remoteSignInError, setRemoteSignInError] = useState<string>();
+  const signingIn = remoteServerId ? remoteSigningIn : localSigningIn;
+  const refreshing = remoteServerId ? remoteRefreshing : localRefreshing;
+  const refresh = async () => {
+    if (!remoteServerId) {
+      await Promise.all([refreshLocal(), props.onRefreshRecordedUsage?.()]);
+      return;
+    }
+    if (remoteRefreshing) return;
+    setRemoteRefreshing(true);
+    try {
+      await Promise.all([
+        useRemoteServersStore.getState().refreshProviderUsage(remoteServerId, [id]),
+        props.onRefreshRecordedUsage?.(),
+      ]);
+    } finally {
+      setRemoteRefreshing(false);
+    }
+  };
+  const onSubmitApiKey = async (event: FormEvent) => {
     event.preventDefault();
-    void handleSubmitApiKey();
+    if (!remoteServerId) {
+      await handleSubmitApiKey();
+      return;
+    }
+    if (remoteSigningIn || apiKey.trim().length === 0) return;
+    setRemoteSigningIn(true);
+    setRemoteSignInError(undefined);
+    try {
+      await useRemoteServersStore
+        .getState()
+        .setProviderUsageApiKey(remoteServerId, id, apiKey.trim());
+      setApiKey("");
+    } catch (error) {
+      setRemoteSignInError(error instanceof Error ? error.message : t`Provider sign-in failed`);
+    } finally {
+      setRemoteSigningIn(false);
+    }
   };
   const { ref, handleRef, isDragging } = useSortable({
     id: `usage-order:${id}`,
@@ -108,10 +242,12 @@ export function UsageProviderCard(props: {
   const credits = hasDisplayableCredits(snapshot?.credits, snapshot?.windows ?? [])
     ? snapshot?.credits
     : undefined;
-  const hasUsage =
-    snapshot?.status === "ok" &&
-    (snapshot.windows.length > 0 || Boolean(snapshot.cost) || Boolean(credits));
+  const hasQuotaUsage =
+    snapshot?.status === "ok" && (snapshot.windows.length > 0 || Boolean(credits));
+  const hasTranscriptUsage = Boolean(snapshot?.cost || snapshot?.tokens || snapshot?.history);
   const hasWindows = snapshot?.status === "ok" && snapshot.windows.length > 0;
+  const scannedTokenHistory = hasScannedTokenHistory(snapshot);
+  const recordedUsage = scannedTokenHistory ? undefined : props.recordedUsage;
   // Mount-time clock for the reset label (same pattern as UsageWindowBars):
   // impure reads can't run during render, and the card re-renders on snapshot
   // updates anyway.
@@ -163,6 +299,9 @@ export function UsageProviderCard(props: {
                 </>
               ) : null}
             </span>
+            {sourceLabel ? (
+              <span className="shrink-0 text-[10px] text-muted/60">{sourceLabel}</span>
+            ) : null}
             {collapsed && (!hasWindows || !snapshot) ? (
               <span className="text-xs text-muted">{usageStatusText(snapshot, label, id)}</span>
             ) : null}
@@ -178,7 +317,7 @@ export function UsageProviderCard(props: {
         >
           <RefreshCw className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />
         </button>
-        {canSignOut ? (
+        {!remoteServerId && canSignOut ? (
           <button
             type="button"
             aria-label={t`Sign out ${label}`}
@@ -202,29 +341,60 @@ export function UsageProviderCard(props: {
       </div>
       {collapsed && hasWindows && snapshot ? (
         <div className="px-2.5 pb-2">
-          <WindowChips windows={snapshot.windows} {...(credits ? { credits } : {})} />
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+            <WindowChips windows={snapshot.windows} {...(credits ? { credits } : {})} />
+            {recordedUsage ? (
+              <RecordedTokenCost
+                usage={recordedUsage}
+                {...(props.recordedUsageSourceLabel
+                  ? { sourceLabel: props.recordedUsageSourceLabel }
+                  : {})}
+                compact
+              />
+            ) : null}
+          </div>
+        </div>
+      ) : collapsed && recordedUsage ? (
+        <div className="px-2.5 pb-2">
+          <RecordedTokenCost
+            usage={recordedUsage}
+            {...(props.recordedUsageSourceLabel
+              ? { sourceLabel: props.recordedUsageSourceLabel }
+              : {})}
+            compact
+          />
         </div>
       ) : null}
 
       {!collapsed ? (
         <div className="space-y-2.5 border-t border-[color:var(--separator)] px-3 pb-4 pt-3">
-          {hasUsage && snapshot ? (
+          {hasQuotaUsage && snapshot ? (
             <>
-              {snapshot.windows.length > 0 ? (
+              {snapshot.windows.length ? (
                 <UsageWindowBars
                   windows={snapshot.windows}
                   showReset={!usesSharedWindowReset(id)}
                 />
               ) : null}
               {credits ? (
-                <UsageCreditsRow credits={credits} showSeparator={snapshot.windows.length > 0} />
+                <UsageCreditsRow
+                  credits={credits}
+                  showSeparator={Boolean(snapshot.windows.length)}
+                />
               ) : null}
-              <UsageCostLine snapshot={snapshot} />
             </>
-          ) : (
+          ) : !hasTranscriptUsage || snapshot?.status !== "ok" ? (
             <div className="space-y-2">
               <p className="text-xs text-muted">{usageStatusText(snapshot, label, id)}</p>
-              {canBrowserSignIn ? (
+              {remoteServerId ? (
+                <p className="text-[11px] text-muted/70">
+                  <Trans>
+                    Account access is read from {sourceLabel ?? remoteServerId}; no extra usage CLI
+                    is required.
+                  </Trans>
+                </p>
+              ) : null}
+              {!remoteServerId && canBrowserSignIn ? (
                 <button
                   type="button"
                   onClick={() => void handleSignIn()}
@@ -234,7 +404,7 @@ export function UsageProviderCard(props: {
                   {signingIn ? <Trans>Signing in…</Trans> : <Trans>Browser sign-in</Trans>}
                 </button>
               ) : null}
-              {canCliSignIn ? (
+              {!remoteServerId && canCliSignIn ? (
                 <button
                   type="button"
                   onClick={handleCliSignIn}
@@ -244,29 +414,62 @@ export function UsageProviderCard(props: {
                   {signingIn ? <Trans>Signing in…</Trans> : <Trans>Sign in</Trans>}
                 </button>
               ) : null}
-              {canApiKeySignIn ? (
-                <form onSubmit={onSubmitApiKey} className="flex items-center gap-1.5">
-                  <input
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={t`Paste ${label} API key`}
-                    aria-label={t`${label} API key`}
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="min-w-0 flex-1 rounded-lg border border-[color:var(--separator)] bg-background px-2 py-1 text-xs text-foreground outline-none focus-visible:focus-ring"
-                  />
-                  <button
-                    type="submit"
-                    disabled={signingIn || apiKey.trim().length === 0}
-                    className="shrink-0 rounded-lg border border-[color:var(--separator)] bg-surface px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted/10 disabled:opacity-50"
+              {(
+                !remoteServerId
+                  ? canApiKeySignIn
+                  : snapshot?.status === "auth-missing" && supportsApiKeyLogin(id)
+              ) ? (
+                <div className="space-y-1">
+                  <form
+                    onSubmit={(event) => void onSubmitApiKey(event)}
+                    className="flex items-center gap-1.5"
                   >
-                    {signingIn ? <Trans>Signing in…</Trans> : <Trans>Sign in</Trans>}
-                  </button>
-                </form>
+                    <input
+                      type="password"
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      placeholder={t`Paste ${label} API key`}
+                      aria-label={t`${label} API key`}
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="min-w-0 flex-1 rounded-lg border border-[color:var(--separator)] bg-background px-2 py-1 text-xs text-foreground outline-none focus-visible:focus-ring"
+                    />
+                    <button
+                      type="submit"
+                      disabled={signingIn || apiKey.trim().length === 0}
+                      className="shrink-0 rounded-lg border border-[color:var(--separator)] bg-surface px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted/10 disabled:opacity-50"
+                    >
+                      {signingIn ? <Trans>Signing in…</Trans> : <Trans>Sign in</Trans>}
+                    </button>
+                  </form>
+                  {remoteSignInError ? (
+                    <p className="text-[10px] text-danger">{remoteSignInError}</p>
+                  ) : null}
+                </div>
               ) : null}
             </div>
-          )}
+          ) : null}
+          {hasTranscriptUsage && snapshot ? (
+            <UsageCostLine snapshot={snapshot} {...(sourceLabel ? { sourceLabel } : {})} />
+          ) : null}
+          {recordedUsage ? (
+            <RecordedTokenCost
+              usage={recordedUsage}
+              {...(props.pricingReviewedAt ? { pricingReviewedAt: props.pricingReviewedAt } : {})}
+              {...(props.recordedUsageSourceLabel
+                ? { sourceLabel: props.recordedUsageSourceLabel }
+                : {})}
+            />
+          ) : null}
+          <UsageHistoryPanelExtension
+            providerId={id}
+            {...(props.historyRemoteServerId
+              ? { remoteServerId: props.historyRemoteServerId }
+              : {})}
+            {...(props.historyRemoteSourceLabel
+              ? { remoteSourceLabel: props.historyRemoteSourceLabel }
+              : {})}
+          />
         </div>
       ) : null}
     </div>

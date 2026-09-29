@@ -26,6 +26,11 @@ export function userDataDirNameFor(channel: PoracodeChannel): string {
   return channel === "nightly" ? ".poracode-nightly" : ".poracode";
 }
 
+/** Electron/Chromium profile directory name inside the platform app-data root. */
+export function electronUserDataDirNameFor(channel: PoracodeChannel): string {
+  return channel === "nightly" ? "poracode-nightly" : "poracode";
+}
+
 export function updaterChannelFor(channel: PoracodeChannel): string | undefined {
   return channel === "nightly" ? "nightly" : undefined;
 }

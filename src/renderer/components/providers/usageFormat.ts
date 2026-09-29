@@ -1,6 +1,11 @@
 import { formatResetCountdown, projectWindowUsage } from "@poracode/agents-usage/formatters";
 import type { UsageProjection } from "@poracode/agents-usage/formatters";
-import type { UsageCredits, UsageSnapshot, UsageWindow } from "@poracode/agents-usage/types";
+import type {
+  UsageCredits,
+  UsageHistory,
+  UsageSnapshot,
+  UsageWindow,
+} from "@poracode/agents-usage/types";
 import { msg } from "@lingui/core/macro";
 import { i18n } from "@/renderer/i18n/i18n";
 import { usageToneColor } from "./usageTone";
@@ -21,6 +26,21 @@ export function formatMoney(amount: number | undefined, currency: string | undef
   }
 }
 
+/** Estimated token costs need sub-cent precision for small local sessions. */
+export function formatEstimatedMoney(amount: number | undefined): string {
+  if (amount === undefined) return "";
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: amount > 0 && amount < 1 ? 4 : 2,
+    }).format(amount);
+  } catch {
+    return `$${amount.toFixed(amount > 0 && amount < 1 ? 4 : 2)}`;
+  }
+}
+
 /** Compact token count, e.g. 34900000 -> "34.9M". */
 export function formatTokens(count: number | undefined): string {
   if (!count || count <= 0) return "0";
@@ -28,6 +48,30 @@ export function formatTokens(count: number | undefined): string {
   if (count >= 1e6) return `${(count / 1e6).toFixed(1)}M`;
   if (count >= 1e3) return `${(count / 1e3).toFixed(1)}K`;
   return String(Math.round(count));
+}
+
+export interface UsageHistoryLifetime {
+  estimatedCostUsd: number;
+  tokens: number;
+  pricedTokens: number;
+  proxyPricedTokens: number;
+}
+
+/** Sum every retained calendar month without changing the rolling 30-day totals. */
+export function summarizeUsageHistory(history: UsageHistory): UsageHistoryLifetime {
+  const summary = history.months.reduce<UsageHistoryLifetime>(
+    (total, month) => ({
+      estimatedCostUsd: total.estimatedCostUsd + month.estimatedCostUsd,
+      tokens: total.tokens + (month.tokens.total ?? 0),
+      pricedTokens: total.pricedTokens + (month.tokens.priced ?? 0),
+      proxyPricedTokens: total.proxyPricedTokens + (month.tokens.proxyPriced ?? 0),
+    }),
+    { estimatedCostUsd: 0, tokens: 0, pricedTokens: 0, proxyPricedTokens: 0 },
+  );
+  return {
+    ...summary,
+    estimatedCostUsd: Math.round(summary.estimatedCostUsd * 1_000_000) / 1_000_000,
+  };
 }
 
 function formatCount(count: number): string {
@@ -54,21 +98,25 @@ export function hasDisplayableCredits(
 }
 
 /**
- * Primary right-hand value for a usage window: utilization percent. Request
- * windows also fold the count into the primary string. Dollar amounts live in
+ * Primary right-hand value for a usage window: remaining and utilized percent.
+ * Request windows also fold the count into the primary string. Dollar amounts live in
  * {@link formatWindowSecondaryValue} so surfaces can render them as smaller
  * muted text next to the percent.
  */
 export function formatWindowValue(w: UsageWindow): string {
-  const pct = `${Math.round(w.usedPercent)}%`;
+  const usedPercent = Math.max(0, Math.min(100, Math.round(w.usedPercent)));
+  const remainingPercent = 100 - usedPercent;
+  const remaining = `${i18n._(msg`Remaining`)} ${remainingPercent}%`;
+  const used = `${i18n._(msg`Used`)} ${usedPercent}%`;
+  const quota = `${remaining} · ${used}`;
   if (w.unit === "requests" && w.used !== undefined) {
     const requests =
       w.limit !== undefined
         ? `${formatCount(w.used)} / ${formatCount(w.limit)}`
         : formatCount(w.used);
-    return `${pct} · ${requests}`;
+    return `${quota} · ${requests}`;
   }
-  return pct;
+  return quota;
 }
 
 /**

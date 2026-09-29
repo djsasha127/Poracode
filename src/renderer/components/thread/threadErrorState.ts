@@ -1,4 +1,9 @@
-import type { AuthState, ErrorItemPayload } from "@/shared/contracts";
+import type {
+  AuthState,
+  CanonicalContentBlock,
+  ErrorItemPayload,
+  MessageItemPayload,
+} from "@/shared/contracts";
 import type { AppStoreState } from "@/renderer/state/slices/shared";
 import {
   getRuntimeItemPayload,
@@ -63,6 +68,23 @@ export function getThreadErrorDockStateForItem(item: RuntimeChatItem): ThreadErr
   const dock = { sourceItemId: item.id, message };
   errorDockStateByItem.set(item, dock);
   return dock;
+}
+
+/** Copy the latest top-level user prompt so an explicit retry can restore it safely. */
+export function getLatestUserMessageContent(
+  state: AppStoreState,
+  threadId: string,
+): CanonicalContentBlock[] | null {
+  const itemIds = state.runtimeItemIdsByThread[threadId];
+  const itemsById = state.runtimeItemsByIdByThread[threadId];
+  if (!itemIds || !itemsById) return null;
+  for (let index = itemIds.length - 1; index >= 0; index -= 1) {
+    const item = itemsById[itemIds[index]!];
+    if (item?.type !== "user_message" || item.parentItemId) continue;
+    const content = getRuntimeItemPayload<MessageItemPayload>(item, "user_message")?.content;
+    return content?.length ? content.map((block) => ({ ...block })) : null;
+  }
+  return null;
 }
 
 function isAbortOnlyErrorMessage(message: string): boolean {

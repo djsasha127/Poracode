@@ -155,7 +155,7 @@ export function buildCodexTurnSettingsOverrides(config: ThreadConfig): CodexTurn
 }
 
 function isImagePath(path: string): boolean {
-  return /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i.test(path);
+  return /\.(png|jpe?g|gif|webp)$/i.test(path);
 }
 
 function fileName(path: string): string {

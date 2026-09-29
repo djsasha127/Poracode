@@ -194,6 +194,18 @@ const audioSettingsSchema = z.object({
   useWebGpu: z.boolean().default(true),
 });
 
+export const usageHistorySourceSettingSchema = z.object({
+  /** Stable renderer-generated id; paths and labels may change without losing cached metadata. */
+  id: z.string().min(1),
+  /** User-facing source label. */
+  name: z.string().min(1),
+  /** Host-native folder path. It may be a CODEX_HOME or a folder of rollout files. */
+  path: z.string().min(1),
+  /** Disabled sources retain their configuration but are excluded from history. */
+  enabled: z.boolean().default(true),
+});
+export type UsageHistorySourceSetting = z.infer<typeof usageHistorySourceSettingSchema>;
+
 const usageSettingsSchema = z.object({
   /** Auto-refresh provider usage on a background timer. */
   autoRefresh: z.boolean().default(true),
@@ -212,9 +224,10 @@ const usageSettingsSchema = z.object({
   providerRefreshIntervals: z.record(z.string(), z.number().int().min(2).max(120)).default({}),
   /**
    * Show estimated $ cost (reconstructed from local logs at public API rates).
-   * Opt-in and panel-only — it is meaningless for subscription/OAuth users.
+   * Enabled by default and panel-only. It is an API-rate equivalent for
+   * subscription/OAuth users, not a charge against their subscription.
    */
-  showEstimatedCost: z.boolean().default(false),
+  showEstimatedCost: z.boolean().default(true),
   /** Show the per-provider usage circles in the sidebar (master toggle). */
   showInSidebar: z.boolean().default(true),
   /**
@@ -239,6 +252,12 @@ const usageSettingsSchema = z.object({
    * Right-clicking the sidebar circle swaps this.
    */
   selectedRingGroups: z.record(z.string(), z.string()).default({}),
+  /**
+   * Additional transcript roots keyed by provider id. Provider-owned indexers
+   * interpret the path; the shared settings layer only persists the generic
+   * source contract. Defaults remain provider-owned and are not stored here.
+   */
+  historySources: z.record(z.string(), z.array(usageHistorySourceSettingSchema)).default({}),
 });
 export type UsageSettings = z.infer<typeof usageSettingsSchema>;
 
@@ -847,13 +866,14 @@ export const defaultSharedSettings: SharedSettings = {
     autoRefresh: true,
     refreshIntervalMinutes: 5,
     providerRefreshIntervals: {},
-    showEstimatedCost: false,
+    showEstimatedCost: true,
     showInSidebar: true,
     sidebarHiddenProviders: [],
     disabledProviders: [...DEFAULT_USAGE_DISABLED_PROVIDER_IDS],
     providerOrder: [],
     collapsedProviders: [],
     selectedRingGroups: {},
+    historySources: {},
   },
   crossagentRoutingGuide: "",
 };

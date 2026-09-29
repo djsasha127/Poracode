@@ -1,6 +1,8 @@
 import { PORACODE_REMOTE_PROTOCOL_VERSION } from "./remote/protocol";
 
 export const REMOTE_NODE_ENV_SCRIPT = String.raw`
+PORACODE_PORTABLE_NODE_VERSION="v24.10.0"
+
 prepend_path_if_dir() {
   if [ -d "$1" ]; then
     case ":$PATH:" in
@@ -12,6 +14,105 @@ prepend_path_if_dir() {
 
 poracode_node_is_compatible() {
   node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 24 || (major === 24 && minor >= 10) ? 0 : 1)' >/dev/null 2>&1
+}
+
+poracode_sha256() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
+install_poracode_portable_node() {
+  PLATFORM="$(uname -s)-$(uname -m)"
+  case "$PLATFORM" in
+    Darwin-arm64)
+      ARCHIVE="node-$PORACODE_PORTABLE_NODE_VERSION-darwin-arm64.tar.gz"
+      ROOT="node-$PORACODE_PORTABLE_NODE_VERSION-darwin-arm64"
+      EXPECTED="fbc3d6e1e1d962450d058e918214373872cc4c46e08673f31c35932afac4a8c5"
+      TAR_ARGS="-xzf"
+      ;;
+    Darwin-x86_64)
+      ARCHIVE="node-$PORACODE_PORTABLE_NODE_VERSION-darwin-x64.tar.gz"
+      ROOT="node-$PORACODE_PORTABLE_NODE_VERSION-darwin-x64"
+      EXPECTED="627b884f66db0dd35f4b46fb9e994774ce560a7fb60798ba1ab81e867a73687d"
+      TAR_ARGS="-xzf"
+      ;;
+    Linux-aarch64|Linux-arm64)
+      ARCHIVE="node-$PORACODE_PORTABLE_NODE_VERSION-linux-arm64.tar.xz"
+      ROOT="node-$PORACODE_PORTABLE_NODE_VERSION-linux-arm64"
+      EXPECTED="07f0558316ebb8977dd6fb29b4de8d369a639d3d8cef544293852a6f5eea6af8"
+      TAR_ARGS="-xJf"
+      ;;
+    Linux-x86_64|Linux-amd64)
+      ARCHIVE="node-$PORACODE_PORTABLE_NODE_VERSION-linux-x64.tar.xz"
+      ROOT="node-$PORACODE_PORTABLE_NODE_VERSION-linux-x64"
+      EXPECTED="2642f4428869aca32443660fd71b3918e2be1277a899bdcaeb64c93b54b5af17"
+      TAR_ARGS="-xJf"
+      ;;
+    *) return 1 ;;
+  esac
+
+  NODE_ROOT="$HOME/.poracode/ssh/node"
+  FINAL="$NODE_ROOT/$ROOT"
+  if [ -x "$FINAL/bin/node" ]; then
+    prepend_path_if_dir "$FINAL/bin"
+    poracode_node_is_compatible && return 0
+  fi
+
+  mkdir -p "$NODE_ROOT"
+  LOCK="$NODE_ROOT/.install-$PORACODE_PORTABLE_NODE_VERSION-$PLATFORM"
+  if ! mkdir "$LOCK" 2>/dev/null; then
+    ATTEMPT=0
+    while [ "$ATTEMPT" -lt 120 ]; do
+      if [ -x "$FINAL/bin/node" ]; then
+        prepend_path_if_dir "$FINAL/bin"
+        poracode_node_is_compatible && return 0
+      fi
+      ATTEMPT=$((ATTEMPT + 1))
+      sleep 0.5
+    done
+    return 1
+  fi
+
+  TMP="$NODE_ROOT/.download-$ARCHIVE-$$"
+  STAGE="$NODE_ROOT/.stage-$ROOT-$$"
+  URL="https://nodejs.org/dist/$PORACODE_PORTABLE_NODE_VERSION/$ARCHIVE"
+  DOWNLOAD_OK=0
+  if command -v curl >/dev/null 2>&1; then
+    curl --fail --location --silent --show-error --retry 2 --connect-timeout 15 \
+      --output "$TMP" "$URL" && DOWNLOAD_OK=1
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$TMP" "$URL" && DOWNLOAD_OK=1
+  fi
+  if [ "$DOWNLOAD_OK" != "1" ] || [ "$(poracode_sha256 "$TMP" 2>/dev/null || true)" != "$EXPECTED" ]; then
+    rm -f "$TMP"
+    rm -rf "$STAGE"
+    rmdir "$LOCK" 2>/dev/null || true
+    return 1
+  fi
+
+  mkdir -p "$STAGE"
+  if ! tar $TAR_ARGS "$TMP" -C "$STAGE"; then
+    rm -f "$TMP"
+    rm -rf "$STAGE"
+    rmdir "$LOCK" 2>/dev/null || true
+    return 1
+  fi
+  rm -f "$TMP"
+  rm -rf "$FINAL"
+  if ! mv "$STAGE/$ROOT" "$FINAL"; then
+    rm -rf "$STAGE"
+    rmdir "$LOCK" 2>/dev/null || true
+    return 1
+  fi
+  rm -rf "$STAGE"
+  rmdir "$LOCK" 2>/dev/null || true
+  prepend_path_if_dir "$FINAL/bin"
+  poracode_node_is_compatible
 }
 
 ensure_poracode_node() {
@@ -65,7 +166,11 @@ ensure_poracode_node() {
     done
   fi
 
-  command -v node >/dev/null 2>&1 && poracode_node_is_compatible
+  if command -v node >/dev/null 2>&1 && poracode_node_is_compatible; then
+    return 0
+  fi
+
+  install_poracode_portable_node
 }
 `;
 
@@ -74,7 +179,7 @@ ${REMOTE_NODE_ENV_SCRIPT}
 HASH="$1"
 RUNTIME="$HOME/.poracode/ssh/runtime/$HASH"
 ensure_poracode_node || {
-  printf 'Poracode SSH requires Node 24.10 or newer on the remote host.\n' >&2
+  printf 'Poracode SSH could not provision its private Node runtime. Check outbound access to nodejs.org, then retry.\n' >&2
   exit 41
 }
 if [ -f "$RUNTIME/.ready" ] && [ "$(cat "$RUNTIME/.ready")" = "$HASH" ] && [ -f "$RUNTIME/server.cjs" ] && [ -f "$RUNTIME/supervisor.cjs" ]; then
@@ -95,7 +200,7 @@ case "$HASH" in
   *[!0-9a-f]*|'') printf 'Invalid Poracode runtime hash.\n' >&2; exit 2 ;;
 esac
 ensure_poracode_node || {
-  printf 'Poracode SSH requires Node 24.10 or newer on the remote host.\n' >&2
+  printf 'Poracode SSH could not provision its private Node runtime. Check outbound access to nodejs.org, then retry.\n' >&2
   exit 41
 }
 command -v npm >/dev/null 2>&1 || {
@@ -146,7 +251,7 @@ case "$RUNTIME_HASH" in
   *[!0-9a-f]*|'') printf 'Invalid Poracode runtime hash.\n' >&2; exit 2 ;;
 esac
 ensure_poracode_node || {
-  printf 'Poracode SSH requires Node 24.10 or newer on the remote host.\n' >&2
+  printf 'Poracode SSH could not provision its private Node runtime. Check outbound access to nodejs.org, then retry.\n' >&2
   exit 41
 }
 NODE="$(command -v node)"
@@ -163,10 +268,12 @@ test -f "$RUNTIME/.ready" || { printf 'Poracode remote runtime is not installed.
 APP_VERSION="$("$NODE" -p 'require(process.argv[1]).version' "$RUNTIME/package.json")"
 
 server_ready() {
-  "$NODE" - "$1" "$2" <<'NODE'
+  REQUIRE_EXACT_VERSION="\${3:-1}"
+  "$NODE" - "$1" "$2" "$REQUIRE_EXACT_VERSION" <<'NODE'
 const http = require("node:http");
 const port = Number(process.argv[2]);
 const appVersion = process.argv[3];
+const requireExactVersion = process.argv[4] !== "0";
 const req = http.get({ host: "127.0.0.1", port, path: "/.well-known/poracode/environment", timeout: 800 }, (res) => {
   let body = "";
   res.setEncoding("utf8");
@@ -178,7 +285,7 @@ const req = http.get({ host: "127.0.0.1", port, path: "/.well-known/poracode/env
         res.statusCode === 200 &&
         descriptor.protocolVersion === ${PORACODE_REMOTE_PROTOCOL_VERSION} &&
         descriptor.hostMode === "helper" &&
-        descriptor.appVersion === appVersion
+        (!requireExactVersion || descriptor.appVersion === appVersion)
           ? 0
           : 1
       );
@@ -190,6 +297,40 @@ const req = http.get({ host: "127.0.0.1", port, path: "/.well-known/poracode/env
 req.on("timeout", () => { req.destroy(); process.exit(1); });
 req.on("error", () => process.exit(1));
 NODE
+}
+
+server_has_active_threads() {
+  "$NODE" - "$RUNTIME/node_modules/better-sqlite3" "$DATA_DIR/state.sqlite" <<'NODE'
+try {
+  const Database = require(process.argv[2]);
+  const db = new Database(process.argv[3], { readonly: true, fileMustExist: true });
+  const row = db
+    .prepare("select count(*) as count from threads where status in ('working','starting','queued')")
+    .get();
+  db.close();
+  process.exit(Number(row?.count ?? 0) > 0 ? 0 : 1);
+} catch {
+  process.exit(1);
+}
+NODE
+}
+
+stop_server() {
+  if [ -z "$1" ] || ! kill -0 "$1" 2>/dev/null; then return; fi
+  kill "$1" 2>/dev/null || true
+  ATTEMPT=0
+  while [ "$ATTEMPT" -lt 50 ] && kill -0 "$1" 2>/dev/null; do
+    ATTEMPT=$((ATTEMPT + 1))
+    sleep 0.1
+  done
+  if kill -0 "$1" 2>/dev/null; then
+    kill -KILL "$1" 2>/dev/null || true
+    ATTEMPT=0
+    while [ "$ATTEMPT" -lt 20 ] && kill -0 "$1" 2>/dev/null; do
+      ATTEMPT=$((ATTEMPT + 1))
+      sleep 0.1
+    done
+  fi
 }
 
 pick_port() {
@@ -212,12 +353,51 @@ NODE
 PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 CURRENT_RUNTIME="$(cat "$RUNTIME_FILE" 2>/dev/null || true)"
-if [ -n "$PID" ] && [ -n "$PORT" ] && [ "$CURRENT_RUNTIME" = "$RUNTIME_HASH" ] && kill -0 "$PID" 2>/dev/null && server_ready "$PORT" "$APP_VERSION"; then
-  :
+ACTUAL_RUNTIME=""
+case "$PID" in *[!0-9]*|'') PID="" ;; esac
+case "$PORT" in *[!0-9]*|'') PORT="" ;; esac
+case "$CURRENT_RUNTIME" in *[!0-9a-f]*|'') CURRENT_RUNTIME="" ;; esac
+
+# A previous bootstrap may have removed the state files after racing a still
+# shutting-down helper. Recover the owner from the shared data-dir lock and the
+# last listening port/runtime from the process log/command before deciding
+# whether an upgrade is required.
+LOCK_PID="$(cat "$DATA_DIR/server.lock" 2>/dev/null || true)"
+case "$LOCK_PID" in *[!0-9]*|'') LOCK_PID="" ;; esac
+if [ -z "$PID" ] && [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then PID="$LOCK_PID"; fi
+if [ -z "$PORT" ] && [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+  PORT="$(sed -n 's#.*listening at:.*:\([0-9][0-9]*\)/.*#\1#p' "$LOG_FILE" 2>/dev/null | tail -n 1)"
+  case "$PORT" in *[!0-9]*|'') PORT="" ;; esac
+fi
+if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+  ACTUAL_RUNTIME="$(ps -p "$PID" -o command= 2>/dev/null | sed -n 's#.*[/]runtime/\([0-9a-f][0-9a-f]*\)/server\.cjs.*#\1#p' | tail -n 1)"
+  case "$ACTUAL_RUNTIME" in *[!0-9a-f]*|'') ACTUAL_RUNTIME="" ;; esac
+  if [ -z "$CURRENT_RUNTIME" ]; then CURRENT_RUNTIME="$ACTUAL_RUNTIME"; fi
+fi
+
+# The state file may intentionally retain the other channel's compatible hash
+# as an alias, while the process command exposes the runtime that is actually
+# executing. Reuse either exact match. A same-version hash that matches neither
+# is a hotfix and must replace the stale helper once it is safe to do so. An
+# app restart must never turn an in-flight remote turn into an interruption:
+# keep a protocol-compatible helper until every active thread has settled.
+REUSE_SERVER=0
+if [ -n "$PID" ] && [ -n "$PORT" ] && kill -0 "$PID" 2>/dev/null && \
+  { [ "$CURRENT_RUNTIME" = "$RUNTIME_HASH" ] || [ "$ACTUAL_RUNTIME" = "$RUNTIME_HASH" ]; } && \
+  server_ready "$PORT" "$APP_VERSION"; then
+  REUSE_SERVER=1
+elif [ -n "$PID" ] && [ -n "$PORT" ] && kill -0 "$PID" 2>/dev/null && \
+  server_ready "$PORT" "$APP_VERSION" 0 && server_has_active_threads; then
+  REUSE_SERVER=1
+fi
+
+if [ "$REUSE_SERVER" = "1" ]; then
+  printf '%s\n' "$PID" >"$PID_FILE"
+  printf '%s\n' "$PORT" >"$PORT_FILE"
+  if [ -n "$CURRENT_RUNTIME" ]; then printf '%s\n' "$CURRENT_RUNTIME" >"$RUNTIME_FILE"; fi
 else
-  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-    kill "$PID" 2>/dev/null || true
-  fi
+  COMPAT_RUNTIME="$CURRENT_RUNTIME"
+  stop_server "$PID"
   rm -f "$PID_FILE" "$PORT_FILE" "$RUNTIME_FILE"
   PORT="$(pick_port)" || { printf 'No remote loopback port is available for Poracode.\n' >&2; exit 46; }
   nohup env \
@@ -233,7 +413,15 @@ else
   PID="$!"
   printf '%s\n' "$PID" >"$PID_FILE"
   printf '%s\n' "$PORT" >"$PORT_FILE"
-  printf '%s\n' "$RUNTIME_HASH" >"$RUNTIME_FILE"
+  # Keep the previous runtime hash as an alias when upgrading a compatible
+  # stable helper. Older Poracode clients compare only this file plus the wire
+  # protocol, so the alias lets Stable and Nightly share the upgraded process
+  # instead of repeatedly replacing one another.
+  if [ -n "$COMPAT_RUNTIME" ] && [ "$COMPAT_RUNTIME" != "$RUNTIME_HASH" ]; then
+    printf '%s\n' "$COMPAT_RUNTIME" >"$RUNTIME_FILE"
+  else
+    printf '%s\n' "$RUNTIME_HASH" >"$RUNTIME_FILE"
+  fi
   READY=0
   ATTEMPT=0
   while [ "$ATTEMPT" -lt 100 ]; do

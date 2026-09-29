@@ -46,7 +46,9 @@ describe("read_thread", () => {
         threadId === "source" ? ({ id: threadId } as Thread) : null,
     } as AppControlsToolContext;
 
-    expect(threadTools.handlers.read_thread!({ threadId: "source", limit: 2 }, ctx)).toEqual({
+    await expect(
+      threadTools.handlers.read_thread!({ threadId: "source", limit: 2 }, ctx),
+    ).resolves.toEqual({
       threadId: "source",
       messageCount: 2,
       nextCursor: 12,
@@ -69,7 +71,7 @@ describe("read_thread", () => {
     expect(getConversationPage).toHaveBeenCalledWith("source", undefined, 2);
   });
 
-  it("allows a caller to opt into a larger per-message result", () => {
+  it("allows a caller to opt into a larger per-message result", async () => {
     getConversationPage.mockReturnValue({
       nextCursor: null,
       items: [
@@ -85,10 +87,10 @@ describe("read_thread", () => {
       getThread: () => ({ id: "source" }) as Thread,
     } as unknown as AppControlsToolContext;
 
-    const result = threadTools.handlers.read_thread!(
+    const result = (await threadTools.handlers.read_thread!(
       { threadId: "source", maxChars: 4_000 },
       ctx,
-    ) as { items: Array<{ text: string; truncated?: true }> };
+    )) as { items: Array<{ text: string; truncated?: true }> };
     expect(result.items[0]).toEqual({
       role: "assistant",
       type: "assistant_message",
@@ -97,7 +99,7 @@ describe("read_thread", () => {
     });
   });
 
-  it("returns display text, not streamed text a display hook replaced or suppressed", () => {
+  it("returns display text, not streamed text a display hook replaced or suppressed", async () => {
     getConversationPage.mockReturnValue({
       nextCursor: null,
       items: [
@@ -124,14 +126,14 @@ describe("read_thread", () => {
       getThread: () => ({ id: "source" }) as Thread,
     } as unknown as AppControlsToolContext;
 
-    const result = threadTools.handlers.read_thread!({ threadId: "source" }, ctx) as {
+    const result = (await threadTools.handlers.read_thread!({ threadId: "source" }, ctx)) as {
       items: Array<{ text?: string }>;
     };
     expect(result.items[0]!.text).toBe("Rewritten for display");
     expect(result.items[1]!.text).toBeUndefined();
   });
 
-  it("keeps assistant image markers when display text is rewritten or suppressed", () => {
+  it("keeps assistant image markers when display text is rewritten or suppressed", async () => {
     getConversationPage.mockReturnValue({
       nextCursor: null,
       items: [
@@ -177,10 +179,30 @@ describe("read_thread", () => {
       getThread: () => ({ id: "source" }) as Thread,
     } as unknown as AppControlsToolContext;
 
-    const result = threadTools.handlers.read_thread!({ threadId: "source" }, ctx) as {
+    const result = (await threadTools.handlers.read_thread!({ threadId: "source" }, ctx)) as {
       items: Array<{ text?: string }>;
     };
     expect(result.items[0]!.text).toBe("Rewritten\n[image: result.png]");
     expect(result.items[1]!.text).toBe("[image: kept.png]");
+  });
+
+  it("falls back to live terminal scrollback when no structured transcript exists", async () => {
+    getConversationPage.mockReturnValue({ nextCursor: null, items: [] });
+    const readTerminalScrollback = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValue("\u001b[1mMuse\u001b[0m\nMUSE_CROSSAGENT_OK");
+    const ctx = {
+      getThread: () => ({ id: "terminal-agent", presentationMode: "terminal" }) as Thread,
+      supervisor: { readTerminalScrollback },
+    } as unknown as AppControlsToolContext;
+
+    const result = (await threadTools.handlers.read_thread!(
+      { threadId: "terminal-agent" },
+      ctx,
+    )) as { source?: string; items?: Array<{ text?: string }> };
+
+    expect(result.source).toBe("terminal_scrollback");
+    expect(result.items?.[0]?.text).toContain("MUSE_CROSSAGENT_OK");
+    expect(readTerminalScrollback).toHaveBeenCalledWith({ threadId: "terminal-agent" });
   });
 });

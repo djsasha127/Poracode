@@ -246,6 +246,7 @@ export interface SubagentRunSummary {
   attempt: number;
   attempt_count: number;
   can_steer: boolean;
+  queued_messages: number;
 }
 
 /**

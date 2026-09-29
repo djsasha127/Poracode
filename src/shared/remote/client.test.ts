@@ -49,6 +49,93 @@ describe("RemoteDesktopClient", () => {
     vi.unstubAllGlobals();
   });
 
+  it("requests explicitly displayed providers from a remote host", async () => {
+    let requestedUrl = "";
+    const client = new RemoteDesktopClient("http://127.0.0.1:38987/", undefined, async (url) => {
+      requestedUrl = String(url);
+      return new Response(JSON.stringify({ snapshots: [], fromCache: false }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    await client.providerUsage(["claude", "muse"]);
+
+    const parsed = new URL(requestedUrl);
+    expect(parsed.pathname).toBe("/api/provider-usage");
+    expect(parsed.searchParams.getAll("providerId")).toEqual(["claude", "muse"]);
+  });
+
+  it("submits provider API keys only in the authenticated request body", async () => {
+    let requestedUrl = "";
+    let requestedBody: unknown;
+    const client = new RemoteDesktopClient(
+      "http://127.0.0.1:38987/",
+      "lc_access_test",
+      async (url, init) => {
+        requestedUrl = String(url);
+        requestedBody = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    );
+
+    await expect(
+      client.setProviderUsageApiKey({ providerId: "kimi", apiKey: "kimi-test-key" }),
+    ).resolves.toEqual({ ok: true });
+    expect(new URL(requestedUrl).pathname).toBe("/api/provider-usage/api-key");
+    expect(requestedBody).toEqual({ providerId: "kimi", apiKey: "kimi-test-key" });
+  });
+
+  it("fetches usage history only on demand and keeps pages bounded", async () => {
+    const requested: URL[] = [];
+    const client = new RemoteDesktopClient(
+      "http://127.0.0.1:38987/",
+      "lc_access_test",
+      async (url) => {
+        const parsed = new URL(String(url));
+        requested.push(parsed);
+        if (parsed.pathname.endsWith("/digest")) {
+          return new Response(
+            JSON.stringify({
+              providerId: "codex",
+              indexVersion: 1,
+              digest: "digest-1",
+              machine: "server",
+              uniqueSessions: 0,
+              candidateFiles: 0,
+              indexing: false,
+              sources: [],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ digest: "digest-1", sessions: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    );
+
+    await client.usageHistoryDigest("codex");
+    await client.usageHistoryPage({
+      providerId: "codex",
+      cursor: "500",
+      limit: 500,
+      sourceIds: ["sessions", "archive"],
+    });
+
+    expect(requested.map((url) => url.pathname)).toEqual([
+      "/api/usage-history/digest",
+      "/api/usage-history/page",
+    ]);
+    expect(requested[1]?.searchParams.get("cursor")).toBe("500");
+    expect(requested[1]?.searchParams.get("limit")).toBe("500");
+    expect(requested[1]?.searchParams.getAll("sourceId")).toEqual(["sessions", "archive"]);
+  });
+
   it("exchanges pairing credentials without requiring a browser navigator", async () => {
     vi.stubGlobal("navigator", undefined);
     let body: unknown;

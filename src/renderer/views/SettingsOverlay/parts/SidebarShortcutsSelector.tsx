@@ -1,7 +1,7 @@
 import { DragDropProvider, type DragEndEvent } from "@dnd-kit/react";
 import { isSortable, useSortable } from "@dnd-kit/react/sortable";
 import { Button, Popover } from "@heroui/react";
-import { CalendarClock, Check, GitPullRequest, GripVertical, Workflow } from "lucide-react";
+import { CalendarClock, Check, GripVertical, Workflow } from "lucide-react";
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { SidebarShortcutId } from "@/shared/settings";
 import { useSharedSettings } from "@/renderer/state/sharedSettingsStore";
@@ -73,14 +73,6 @@ export function SidebarShortcutsSelector() {
   const setShortcutOrder = useSharedSettings((state) => state.setSidebarShortcutOrder);
 
   const shortcutsById = new Map<SidebarShortcutId, SidebarShortcutOption>([
-    [
-      "pullRequests",
-      {
-        id: "pullRequests",
-        label: t`Pull requests`,
-        icon: <GitPullRequest className="size-3.5" />,
-      },
-    ],
     [
       "githubActions",
       {

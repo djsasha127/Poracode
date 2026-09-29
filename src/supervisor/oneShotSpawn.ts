@@ -165,13 +165,49 @@ export function spawnAgentPty(
 
     let output = "";
     let timedOut = false;
+    let settled = false;
+    let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+    let dataDisposable: { dispose(): void } | undefined;
+    let exitDisposable: { dispose(): void } | undefined;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      signal?.removeEventListener("abort", onAbort);
+      dataDisposable?.dispose();
+      exitDisposable?.dispose();
+    };
+
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
 
     const killPty = () => {
-      if (process.platform === "win32") {
-        terminateProcessTree(pty.pid);
-        return;
+      try {
+        if (process.platform === "win32") {
+          terminateProcessTree(pty.pid);
+        } else {
+          pty.kill();
+        }
+      } catch {
+        // The PTY may already be gone.
       }
-      pty.kill();
+      forceKillTimer = setTimeout(() => {
+        try {
+          if (process.platform === "win32") {
+            terminateProcessTree(pty.pid);
+          } else {
+            pty.kill("SIGKILL");
+          }
+        } catch {
+          // The PTY may already be gone.
+        }
+        rejectOnce(new Error(signal?.aborted ? "Aborted" : "Agent timed out"));
+      }, 1_000);
+      forceKillTimer.unref?.();
     };
     const onAbort = () => {
       killPty();
@@ -182,14 +218,13 @@ export function spawnAgentPty(
     }, timeoutMs);
     if (typeof timer.unref === "function") timer.unref();
 
-    const dataDisposable = pty.onData((data) => {
+    dataDisposable = pty.onData((data) => {
       output += data;
     });
-    const exitDisposable = pty.onExit(({ exitCode }) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      dataDisposable.dispose();
-      exitDisposable.dispose();
+    exitDisposable = pty.onExit(({ exitCode }) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
 
       const text = stripOneShotBanner(stripAnsiPreservingLayout(output)).trim();
       if (signal?.aborted) {

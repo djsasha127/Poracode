@@ -45,10 +45,11 @@ describe("SidebarFooterNav", () => {
     });
   });
 
-  it("shows labeled rows with a collapse toggle by default", () => {
+  it("shows only the retained labeled rows with a collapse toggle when expanded", () => {
     render(<SidebarFooterNav remoteAccessStatus="off" />);
 
-    expect(screen.getByText("Pull requests")).toBeInTheDocument();
+    expect(screen.queryByText("Pull requests")).not.toBeInTheDocument();
+    expect(screen.queryByText("What's New")).not.toBeInTheDocument();
     expect(screen.getByText("Schedules")).toBeInTheDocument();
     expect(screen.getByText("Settings")).toBeInTheDocument();
     expect(screen.getByText("Hide sidebar")).toBeInTheDocument();
@@ -66,7 +67,8 @@ describe("SidebarFooterNav", () => {
     // aria-labels on the icon buttons.
     expect(screen.queryByText("Settings")).not.toBeInTheDocument();
     expect(screen.queryByText("Hide sidebar")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Pull requests" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pull requests" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "What's New" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Schedules" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remote Access" })).toBeInTheDocument();
@@ -135,7 +137,7 @@ describe("SidebarFooterNav", () => {
 
       const menu = await screen.findByRole("menu");
       expect(menu).toBeInTheDocument();
-      expect(screen.getByRole("menuitem", { name: "Pull requests" })).toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: "Pull requests" })).not.toBeInTheDocument();
       expect(screen.getByRole("menuitem", { name: "Schedules" })).toBeInTheDocument();
       expect(screen.getByRole("menuitem", { name: "Remote Access" })).toBeInTheDocument();
 

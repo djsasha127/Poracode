@@ -108,6 +108,7 @@ function buildPostHogEnvDefines(mode: string): Record<string, string> {
 // keeps config loading uniform with tsdown.config.ts. Parity is pinned by
 // src/shared/channel.config-parity.test.ts.
 const poracodeChannel = process.env.PORACODE_CHANNEL === "nightly" ? "nightly" : "stable";
+const poracodeBuildLabel = process.env.PORACODE_BUILD_LABEL?.trim() ?? "";
 
 // Keep in sync with scripts/dev-server-port.mjs: smoke runs and parallel
 // worktrees override the dev-server port so isolated apps can run side by side.
@@ -360,6 +361,7 @@ export default defineConfig(({ mode }) => ({
   base: mobileOnly ? mobileBasePath : "./",
   define: {
     ...buildPostHogEnvDefines(mode),
+    __PORACODE_BUILD_LABEL__: JSON.stringify(poracodeBuildLabel),
     __PORACODE_CHANNEL__: JSON.stringify(poracodeChannel),
     "import.meta.env.VITE_PORACODE_BUILD_TARGET": JSON.stringify(mobileOnly ? "mobile" : "desktop"),
     "import.meta.env.VITE_VERCEL_ANALYTICS_ENABLED": JSON.stringify(vercelAnalyticsEnabled),

@@ -5,6 +5,7 @@ import { Trans, useLingui } from "@lingui/react/macro";
 import { isRemoteSession, readBridge } from "@/renderer/bridge";
 import { Button, ToggleSwitch } from "@/renderer/components/common";
 import { usageProvidersForAgentInstances } from "@/renderer/components/providers/usageProviders";
+import { UsageHistorySettingsExtensions } from "@/renderer/components/providers/usageHistoryExtensions";
 import { useSharedSettings } from "@/renderer/state/sharedSettingsStore";
 import { useProviderUsageStore } from "@/renderer/state/providerUsageStore";
 import { SettingRow, SettingsPage } from "./SettingsForm";
@@ -157,6 +158,8 @@ export function UsageSettings() {
           }}
         />
       </SettingRow>
+
+      <UsageHistorySettingsExtensions />
 
       <div className="pt-2">
         <p className="mb-1 text-sm font-medium text-foreground">

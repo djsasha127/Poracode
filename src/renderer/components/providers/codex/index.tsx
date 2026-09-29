@@ -18,10 +18,18 @@ import {
 import { registerCommitGenDefaults } from "../commitGen";
 import { registerConflictResolverDefaults } from "../conflictResolver";
 import { registerTitleGenDefaults } from "../titleGen";
+import {
+  registerUsageHistoryPanelExtension,
+  registerUsageHistorySettingsExtension,
+} from "../usageHistoryExtensions";
+import { CodexUsageHistory } from "./CodexUsageHistory";
+import { CodexUsageHistorySettings } from "./CodexUsageHistorySettings";
 
 const PROVIDER_KIND = providerManifest.kind;
 
 registerProviderIcon(PROVIDER_KIND, CodexStatusIcon);
+registerUsageHistoryPanelExtension(PROVIDER_KIND, CodexUsageHistory);
+registerUsageHistorySettingsExtension(PROVIDER_KIND, CodexUsageHistorySettings);
 // Codex 5.6 utility defaults: Luna for cheap title gen, Terra for commit
 // messages, Sol for interactive conflict resolution.
 registerCommitGenDefaults(PROVIDER_KIND, {

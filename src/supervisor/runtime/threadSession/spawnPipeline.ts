@@ -67,7 +67,11 @@ import { ensureNodePtySpawnHelperExecutable } from "../../nodePty";
 import type { QueuedStructuredTurn, SessionRuntime } from "../sessionTypes";
 import { effectiveProjectLocation, withLogicalProjectLocation } from "../sessionTypes";
 import type { ThreadOutputPipeline } from "../threadOutputPipeline";
-import { rewriteSegmentsForWsl } from "../threadAttachments";
+import {
+  prepareStructuredAttachmentSegments,
+  rewriteSegmentsForWsl,
+  validateAttachmentSegments,
+} from "../threadAttachments";
 import {
   buildProviderHandoffInstruction,
   isResolvedThreadMentionSegment,
@@ -250,7 +254,12 @@ export function composeResolvedMcpServers(
     http("crossagents", crossagentMcp, 300_000, "approve"),
     http("computer-use", computerUseMcp),
     http("chrome", chromeMcp),
-    http("app-controls", appControlsMcp),
+    // App controls deliberately includes blocking orchestration such as
+    // `wait_for_thread` (up to 30 minutes) and cold `send_to_thread` resumes.
+    // Claude treats an otherwise healthy silent HTTP tool as dead after the
+    // configured server timeout, so the generic 30-second default causes a
+    // successful-but-slow resume to be reported as an undelivered message.
+    http("app-controls", appControlsMcp, 1_800_000),
   ].filter((server): server is ResolvedMcpServer => server !== undefined);
 }
 
@@ -371,8 +380,12 @@ export class SpawnPipeline {
     const mentionSegments = payload.segments
       ? resolveThreadMentionSegments(payload.segments)
       : undefined;
-    const wslSegments = mentionSegments
-      ? await rewriteSegmentsForWsl(mentionSegments, executionLocation, {
+    if (!useStructuredFlow) await validateAttachmentSegments(mentionSegments);
+    const preparedSegments = useStructuredFlow
+      ? await prepareStructuredAttachmentSegments(mentionSegments)
+      : mentionSegments;
+    const wslSegments = preparedSegments
+      ? await rewriteSegmentsForWsl(preparedSegments, executionLocation, {
           preserveImageAttachments:
             useStructuredFlow && adapter.capabilities.readsImageAttachmentsFromHost !== false,
           preservePdfAttachments:
@@ -674,9 +687,11 @@ export class SpawnPipeline {
             : msg("supervisor.handoffTranscriptUnavailable", { agent: adapter.label }),
         });
       }
-      const resolvedSessionRef =
-        payload.sessionRef ??
-        (openedStructuredThreadId ? createKnownSessionRef(openedStructuredThreadId) : undefined);
+      const resolvedSessionRef = openedStructuredThreadId
+        ? openedStructuredThreadId === payload.sessionRef?.providerSessionId
+          ? payload.sessionRef
+          : createKnownSessionRef(openedStructuredThreadId)
+        : payload.sessionRef;
       const startInterrupted = ctx.pendingStartInterrupts.delete(payload.threadId);
       const session = this.spawnThread({
         threadId: payload.threadId,

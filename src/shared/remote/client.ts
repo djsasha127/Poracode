@@ -76,6 +76,14 @@ import {
   type ProjectLocation,
   type PromptSegment,
   type ProviderUsageResponse,
+  type UsageApiKeyPayload,
+  type UsageLoginResult,
+  type RefreshUsageHistoryPayload,
+  type UsageHistoryDigest,
+  type UsageHistoryPagePayload,
+  type UsageHistoryPageResponse,
+  usageHistoryDigestSchema,
+  usageHistorySessionSummarySchema,
   type RemoteThreadCommand,
   type ResizeTerminalPayload,
   type SendThreadInputPayload,
@@ -377,13 +385,66 @@ export class RemoteDesktopClient {
 
   /** Provider usage snapshots; the response shape is a typed contract with no
    * runtime schema (see `ProviderUsageResponse`), so a light shape check only. */
-  async providerUsage(): Promise<ProviderUsageResponse> {
+  async providerUsage(providerIds?: readonly string[]): Promise<ProviderUsageResponse> {
+    const search = new URLSearchParams();
+    for (const providerId of providerIds ?? []) search.append("providerId", providerId);
+    const query = search.size > 0 ? `?${search.toString()}` : "";
     const result = parseResponse(
       z.object({ snapshots: z.array(z.unknown()), fromCache: z.boolean() }),
-      await this.requestJson("/api/provider-usage"),
+      await this.requestJson(`/api/provider-usage${query}`),
       "provider usage",
     );
     return result as ProviderUsageResponse;
+  }
+
+  /** Seal a provider API key on the remote host; the authenticated SSH-backed
+   * transport is the only place the plaintext travels. */
+  async setProviderUsageApiKey(payload: UsageApiKeyPayload): Promise<UsageLoginResult> {
+    const result = parseResponse(
+      z.object({ ok: z.boolean(), error: z.string().optional() }),
+      await this.requestJson("/api/provider-usage/api-key", { method: "POST", body: payload }),
+      "provider API-key login",
+    );
+    return result.error === undefined ? { ok: result.ok } : { ok: result.ok, error: result.error };
+  }
+
+  async usageHistoryDigest(providerId: string): Promise<UsageHistoryDigest> {
+    const query = new URLSearchParams({ providerId });
+    return parseResponse(
+      usageHistoryDigestSchema,
+      await this.requestJson(`/api/usage-history/digest?${query.toString()}`),
+      "usage history digest",
+    );
+  }
+
+  async usageHistoryPage(payload: UsageHistoryPagePayload): Promise<UsageHistoryPageResponse> {
+    const query = new URLSearchParams({ providerId: payload.providerId });
+    if (payload.cursor) query.set("cursor", payload.cursor);
+    if (payload.limit) query.set("limit", String(payload.limit));
+    for (const sourceId of payload.sourceIds ?? []) query.append("sourceId", sourceId);
+    const schema = z.object({
+      digest: z.string(),
+      sessions: z.array(usageHistorySessionSummarySchema),
+      nextCursor: z.string().optional(),
+    });
+    const result = parseResponse(
+      schema,
+      await this.requestJson(`/api/usage-history/page?${query.toString()}`),
+      "usage history page",
+    );
+    return {
+      digest: result.digest,
+      sessions: result.sessions,
+      ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+    };
+  }
+
+  async refreshUsageHistory(payload: RefreshUsageHistoryPayload): Promise<UsageHistoryDigest> {
+    return parseResponse(
+      usageHistoryDigestSchema,
+      await this.requestJson("/api/usage-history/refresh", { method: "POST", body: payload }),
+      "usage history refresh",
+    );
   }
 
   async projectNotes(projectId: string): Promise<ProjectNotes | null> {

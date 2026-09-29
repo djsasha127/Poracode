@@ -249,6 +249,7 @@ describe("sharedSettingsFile", () => {
         providerOrder: [],
         collapsedProviders: [],
         selectedRingGroups: {},
+        historySources: {},
       },
       crossagentRoutingGuide: "",
     });
@@ -396,6 +397,7 @@ describe("sharedSettingsFile", () => {
         providerOrder: [],
         collapsedProviders: [],
         selectedRingGroups: {},
+        historySources: {},
       },
       crossagentRoutingGuide: "",
     });

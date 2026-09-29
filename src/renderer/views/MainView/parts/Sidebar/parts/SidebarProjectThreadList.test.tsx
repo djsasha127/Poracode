@@ -121,4 +121,18 @@ describe("SidebarProjectThreadList", () => {
     expect(screen.getByText(/thread:p1 in Poracode/)).toBeInTheDocument();
     expect(screen.getByText(/thread:p2 in Poracode/)).toBeInTheDocument();
   });
+
+  it("omits starred threads when a global Favorites section owns them", () => {
+    useAppStore.setState({
+      threads: [
+        makeThread("favorite", "local-1", "2026-08-04T10:00:00.000Z", { starred: true }),
+        makeThread("ordinary", "local-1", "2026-08-03T10:00:00.000Z"),
+      ],
+    });
+
+    render(<SidebarProjectThreadList project={localProject} sortMode="updated" excludeStarred />);
+
+    expect(screen.queryByText(/thread:favorite/)).not.toBeInTheDocument();
+    expect(screen.getByText(/thread:ordinary/)).toBeInTheDocument();
+  });
 });

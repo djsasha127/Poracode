@@ -271,9 +271,16 @@ const SHARED_MESSAGE_DESCRIPTORS: Record<MessageKey, MessageDescriptor> = {
   "remote.helper.timeout": msg({
     message: "Timed out waiting for Poracode Helper.",
   }),
-  "remote.helper.startFailed": msg({
+  "remote.helper.dependenciesMissing": msg({
     message:
-      "Poracode Helper failed to start. Check that Node 24.10 or newer and npm are installed on the remote machine.",
+      "Poracode Helper could not install its private Node runtime. Check that the remote machine can access nodejs.org, then retry.",
+  }),
+  "remote.helper.sharedWorkspaceBusy": msg({
+    message:
+      "The shared Poracode workspace is still in use by another helper. Retry the SSH connection in a few seconds.",
+  }),
+  "remote.helper.startFailed": msg({
+    message: "Poracode Helper failed to start. Retry the SSH connection.",
   }),
   "ssh.runtimeManifest.invalid": msg({
     message: "Poracode SSH runtime manifest is missing or invalid: {path}",

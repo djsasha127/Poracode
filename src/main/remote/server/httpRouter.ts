@@ -27,6 +27,11 @@ import {
   prWatchAgentSyncSchema,
   prWatchInputSchema,
   prWatchKeySchema,
+  providerUsagePayloadSchema,
+  refreshUsageHistoryPayloadSchema,
+  usageApiKeyPayloadSchema,
+  usageHistoryDigestPayloadSchema,
+  usageHistoryPagePayloadSchema,
   profileIdentitySchema,
   profileStatsRequestSchema,
   projectNotesSchema,
@@ -460,7 +465,44 @@ export async function handleHttp(
     }
     if (req.method === "GET" && url.pathname === "/api/provider-usage") {
       ctx.security.requireBearer(req, ["session:read"]);
-      writeJson(res, 200, await ctx.options.callSupervisor("getProviderUsage", {}));
+      const providerIds = url.searchParams.getAll("providerId");
+      const payload = providerUsagePayloadSchema.parse(
+        providerIds.length > 0 ? { providerIds } : {},
+      );
+      writeJson(res, 200, await ctx.options.callSupervisor("getProviderUsage", payload));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/provider-usage/api-key") {
+      ctx.security.requireBearer(req, ["session:operate"]);
+      const payload = usageApiKeyPayloadSchema.parse(await readJsonBody(req));
+      writeJson(res, 200, await ctx.options.callSupervisor("setProviderUsageApiKey", payload));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/usage-history/digest") {
+      ctx.security.requireBearer(req, ["session:read"]);
+      const payload = usageHistoryDigestPayloadSchema.parse({
+        providerId: url.searchParams.get("providerId"),
+      });
+      writeJson(res, 200, await ctx.options.callSupervisor("getUsageHistoryDigest", payload));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/usage-history/page") {
+      ctx.security.requireBearer(req, ["session:read"]);
+      const limit = url.searchParams.get("limit");
+      const sourceIds = url.searchParams.getAll("sourceId");
+      const payload = usageHistoryPagePayloadSchema.parse({
+        providerId: url.searchParams.get("providerId"),
+        ...(url.searchParams.get("cursor") ? { cursor: url.searchParams.get("cursor") } : {}),
+        ...(limit ? { limit: Number(limit) } : {}),
+        ...(sourceIds.length > 0 ? { sourceIds } : {}),
+      });
+      writeJson(res, 200, await ctx.options.callSupervisor("getUsageHistoryPage", payload));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/usage-history/refresh") {
+      ctx.security.requireBearer(req, ["session:operate"]);
+      const payload = refreshUsageHistoryPayloadSchema.parse(await readJsonBody(req));
+      writeJson(res, 200, await ctx.options.callSupervisor("refreshUsageHistory", payload));
       return;
     }
     const notesProjectId = projectIdFromPath(url.pathname, "notes");

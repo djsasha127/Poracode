@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDbStorage } from "./dbStorage";
+import { createDbStorage, prepareForExternalDatabaseSnapshot } from "./dbStorage";
 
 const bridge = vi.hoisted(() => ({
   windowKind: "main" as "main" | "quickComposer",
@@ -7,7 +7,16 @@ const bridge = vi.hoisted(() => ({
   dbGetThreads: vi.fn<() => Promise<[]>>(),
   dbGetState: vi.fn<(key: string) => Promise<string | null>>(),
   dbSetState: vi.fn<(key: string, value: string) => Promise<void>>(),
-  dbSyncAll: vi.fn<(projects: unknown[], threads: unknown[], viewJson: string) => Promise<void>>(),
+  dbSyncAll:
+    vi.fn<
+      (
+        projects: unknown[],
+        threads: unknown[],
+        viewJson: string,
+        baseProjects?: unknown[],
+        baseThreads?: unknown[],
+      ) => Promise<void>
+    >(),
 }));
 
 vi.mock("../bridge", () => ({
@@ -106,6 +115,43 @@ describe("createDbStorage", () => {
         view: { kind: "home" },
         groupLayouts: {},
       },
+      version: 5,
+    } as never);
+
+    expect(bridge.dbSyncAll).not.toHaveBeenCalled();
+  });
+
+  it("sends the hydrated snapshot as the optimistic sync baseline", async () => {
+    const project = { id: "existing-project" };
+    bridge.dbGetProjects.mockResolvedValue([project] as never);
+    const storage = createDbStorage();
+    await storage.getItem("poracode-app-v2");
+
+    await storage.setItem("poracode-app-v2", {
+      state: {
+        projects: [project, { id: "new-project" }],
+        threads: [],
+        view: { kind: "home" },
+        groupLayouts: {},
+      },
+      version: 5,
+    } as never);
+
+    expect(bridge.dbSyncAll).toHaveBeenCalledWith(
+      [project, { id: "new-project" }],
+      [],
+      JSON.stringify({ kind: "home" }),
+      [project],
+      [],
+    );
+  });
+
+  it("does not echo a snapshot pushed by the other desktop process", async () => {
+    const storage = createDbStorage();
+    prepareForExternalDatabaseSnapshot([] as never, [] as never);
+
+    await storage.setItem("poracode-app-v2", {
+      state: { projects: [], threads: [], view: { kind: "home" }, groupLayouts: {} },
       version: 5,
     } as never);
 

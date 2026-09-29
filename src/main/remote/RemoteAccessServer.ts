@@ -243,7 +243,7 @@ export interface RemoteAccessServerOptions {
  * Event `type`s a remote client actually consumes, so only these are buffered
  * on the replayable stream and broadcast. Chatty supervisor events no remote
  * client reads (`lsp-message`, `git-changed`, `project-tree-changed`,
- * `provider-usage*`, `agent-detected`, `thread-osc-*`) waste phone bandwidth
+ * `agent-detected`, `thread-osc-*`) waste phone bandwidth
  * and churn the bounded replay buffer (causing spurious resync-required), so we
  * drop them here.
  *
@@ -275,6 +275,10 @@ const REMOTELY_CONSUMED_EVENT_TYPES: ReadonlySet<RemoteBroadcastEvent["type"]> =
   "agent-status-updated",
   "windows-agent-statuses",
   "wsl-agent-statuses",
+  // Host-scoped usage. This is infrequent and lets desktop SSH clients receive
+  // the fresh result of a cache-triggered provider refresh without polling.
+  "provider-usage",
+  "provider-usage-all",
   // Out-of-band remote events.
   "remote-git-summaries",
   "remote-git-state",

@@ -7,9 +7,20 @@ import {
   type UsageSnapshot,
 } from "@poracode/agents-usage";
 import { coalesceByKey } from "@/shared/coalesce";
-import type { ProviderUsagePayload, ProviderUsageResponse } from "@/shared/contracts";
+import type {
+  ProviderUsagePayload,
+  ProviderUsageResponse,
+  RefreshUsageHistoryPayload,
+  UsageApiKeyPayload,
+  UsageHistoryDigest,
+  UsageHistoryDigestPayload,
+  UsageHistoryPagePayload,
+  UsageHistoryPageResponse,
+  UsageLoginResult,
+} from "@/shared/contracts";
 import type { SupervisorEvent } from "@/shared/ipc";
 import { defaultSharedSettings, type SharedSettings, type UsageSettings } from "@/shared/settings";
+import { setUsageSecret } from "@/shared/usageSecretStore";
 import {
   collectClaudeProfile,
   readClaudeUsageProfiles,
@@ -19,6 +30,11 @@ import {
 } from "../agents/claude/claudeUsageProfiles";
 import { readProfileUsageCollectors } from "../agents/profileUsageRegistry";
 import {
+  readCodexUsageProfiles,
+  withCodexEstimatedCost,
+  type CodexUsageProfile,
+} from "../agents/codex/codexUsageProfiles";
+import {
   collectCursorProfile,
   readCursorSdkUsageProfile,
   readCursorUsageProfiles,
@@ -27,6 +43,7 @@ import {
 import { createLocalUsageCollectors, type LocalUsageCollector } from "./localUsageCollectors";
 import { createNodeUsageHost } from "./usageHost";
 import { readSupervisorSharedSettings } from "./supervisorSharedSettings";
+import type { UsageHistoryProvider } from "./usageHistoryProvider";
 
 /**
  * Periodic/on-demand provider usage collection, modeled on AgentStatusService:
@@ -42,9 +59,14 @@ import { readSupervisorSharedSettings } from "./supervisorSharedSettings";
  * Bump when the cached snapshot source or shape changes so stale caches are
  * discarded. v3 relabeled Cursor's first-party window; v4 reselects the main
  * Cursor account when an SDK key is configured; v5 removes the desktop-app
- * credential fallback from the CLI-backed main tile.
+ * credential fallback from the CLI-backed main tile; v6 invalidates snapshots
+ * that predate calendar-month model/effort history; v7 refreshes corrected
+ * standard GPT-6 API-rate equivalents and drops zero-token synthetic groups;
+ * v8 adds legacy Codex months plus Muse/Kimi/Fable price coverage; v9 removes
+ * base Codex transcript history from the polling snapshot because the new
+ * persistent, paginated history index owns it independently of quota polling.
  */
-const USAGE_CACHE_VERSION = 5;
+const USAGE_CACHE_VERSION = 9;
 /** The full default provider set, from the package catalog (single source of truth). */
 const DEFAULT_PROVIDER_IDS: readonly string[] = allUsageProviderDescriptors().map((d) => d.id);
 const MIN_REFRESH_INTERVAL_MS = 2 * 60_000;
@@ -69,6 +91,14 @@ export interface UsageServiceOptions {
   providerIds?: readonly string[];
   /** Supervisor-local collectors (opencode, antigravity); injectable in tests. */
   localCollectors?: LocalUsageCollector[];
+  /** Provider-owned hooks that add normalized transcript history or derived totals. */
+  usageSnapshotEnrichers?: UsageSnapshotEnricher[];
+  /** Provider-owned persistent transcript indexes, dispatched without vendor branches. */
+  usageHistoryProviders?: UsageHistoryProvider[];
+}
+
+export interface UsageSnapshotEnricher {
+  enrich(snapshot: UsageSnapshot, nowMs: number): Promise<UsageSnapshot>;
 }
 
 interface UsageCacheFile {
@@ -86,8 +116,10 @@ function hasDisplayableUsage(snapshot: UsageSnapshot): boolean {
 }
 
 function withoutEstimatedCost(snapshot: UsageSnapshot): UsageSnapshot {
-  if (!snapshot.cost?.estimated) return snapshot;
-  const { cost: _cost, ...rest } = snapshot;
+  if (!snapshot.cost?.estimated && !snapshot.history) return snapshot;
+  const { history: _history, ...withoutHistory } = snapshot;
+  if (!snapshot.cost?.estimated) return withoutHistory;
+  const { cost: _cost, ...rest } = withoutHistory;
   return rest;
 }
 
@@ -95,6 +127,7 @@ export class UsageService {
   private readonly registry: UsageCollectorRegistry = createUsageCollectorRegistry();
   private readonly localCollectors: Map<string, LocalUsageCollector>;
   private readonly host: HostPort;
+  private readonly usageHistoryProviders: Map<string, UsageHistoryProvider>;
   private readonly snapshots = new Map<string, UsageSnapshot>();
   private loadedFromCache = false;
   /** In-flight refreshes keyed by their sorted id-set, so identical concurrent refreshes coalesce. */
@@ -107,7 +140,48 @@ export class UsageService {
     this.localCollectors = new Map(
       (options.localCollectors ?? createLocalUsageCollectors()).map((c) => [c.id, c]),
     );
+    this.usageHistoryProviders = new Map(
+      (options.usageHistoryProviders ?? []).map((provider) => [provider.providerId, provider]),
+    );
     this.loadCache();
+  }
+
+  private requireUsageHistoryProvider(providerId: string): UsageHistoryProvider {
+    const provider = this.usageHistoryProviders.get(providerId);
+    if (!provider) throw new Error(`Usage history is unavailable for ${providerId}`);
+    return provider;
+  }
+
+  getUsageHistoryDigest(payload: UsageHistoryDigestPayload): Promise<UsageHistoryDigest> {
+    return this.requireUsageHistoryProvider(payload.providerId).getDigest();
+  }
+
+  getUsageHistoryPage(payload: UsageHistoryPagePayload): Promise<UsageHistoryPageResponse> {
+    return this.requireUsageHistoryProvider(payload.providerId).getPage(payload);
+  }
+
+  refreshUsageHistory(payload: RefreshUsageHistoryPayload): Promise<UsageHistoryDigest> {
+    return this.requireUsageHistoryProvider(payload.providerId).refresh(payload);
+  }
+
+  /** Seal an API key on this host, then force-refresh only that provider. */
+  async setProviderUsageApiKey(payload: UsageApiKeyPayload): Promise<UsageLoginResult> {
+    const providerId = payload.providerId.split(":", 1)[0] ?? payload.providerId;
+    const descriptor = allUsageProviderDescriptors().find((entry) => entry.id === providerId);
+    if (
+      !descriptor?.needsLogin ||
+      (descriptor.mechanism !== "api-key" && descriptor.apiKeyFallback !== true)
+    ) {
+      return { ok: false, error: `No API-key login for ${providerId}` };
+    }
+    const apiKey = payload.apiKey.trim();
+    if (!apiKey) return { ok: false, error: "API key is empty" };
+    if (!this.options.cacheDir) {
+      return { ok: false, error: "Provider credential storage is unavailable" };
+    }
+    setUsageSecret(this.options.cacheDir, providerId, "apiKey", apiKey);
+    await this.refreshProviderUsage({ providerIds: [providerId], force: true });
+    return { ok: true };
   }
 
   private defaultProviderIds(): string[] {
@@ -248,6 +322,7 @@ export class UsageService {
 
   private async runRefresh(ids: string[]): Promise<ProviderUsageResponse> {
     const claudeProfiles = this.claudeUsageProfiles();
+    const codexProfiles = readCodexUsageProfiles(this.readSharedSettings());
     const registeredProfiles = this.registeredUsageProfiles();
     const cursorSdkProfile = readCursorSdkUsageProfile(this.readSharedSettings());
     const cursorProfiles = this.cursorUsageProfiles();
@@ -303,7 +378,7 @@ export class UsageService {
     ].map((snap) => this.preserveOnTransientFailure(snap));
     // Keep collector estimates cached so toggling their visibility needs no refresh.
     if (showEstimatedCost) {
-      snapshots = await this.withEstimatedCost(snapshots, claudeProfiles);
+      snapshots = await this.withEstimatedCost(snapshots, claudeProfiles, codexProfiles);
     }
     for (const snapshot of snapshots) {
       this.snapshots.set(snapshot.providerId, snapshot);
@@ -379,10 +454,18 @@ export class UsageService {
    */
   private async withEstimatedCost(
     snapshots: UsageSnapshot[],
-    profiles: Map<string, ClaudeUsageProfile>,
+    claudeProfiles: Map<string, ClaudeUsageProfile>,
+    codexProfiles: Map<string, CodexUsageProfile>,
   ): Promise<UsageSnapshot[]> {
     return Promise.all(
-      snapshots.map((snapshot) => withClaudeEstimatedCost(snapshot, profiles, this.host.now())),
+      snapshots.map(async (snapshot) => {
+        const withClaude = await withClaudeEstimatedCost(snapshot, claudeProfiles, this.host.now());
+        let enriched = await withCodexEstimatedCost(withClaude, codexProfiles, this.host.now());
+        for (const enricher of this.options.usageSnapshotEnrichers ?? []) {
+          enriched = await enricher.enrich(enriched, this.host.now());
+        }
+        return enriched;
+      }),
     );
   }
 

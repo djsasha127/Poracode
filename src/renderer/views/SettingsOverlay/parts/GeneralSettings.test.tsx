@@ -44,21 +44,20 @@ describe("GeneralSettings", () => {
     render(<GeneralSettings />);
 
     const trigger = screen.getByRole("button", { name: "Sidebar shortcuts" });
-    expect(trigger).toHaveTextContent("2 / 3");
+    expect(trigger).toHaveTextContent("1 / 2");
 
     fireEvent.click(trigger);
 
-    const pullRequests = screen.getByRole("option", { name: /Pull requests/ });
+    expect(screen.queryByRole("option", { name: /Pull requests/ })).not.toBeInTheDocument();
     const githubActions = screen.getByRole("option", { name: /GitHub Actions/ });
     const schedules = screen.getByRole("option", { name: /Schedules/ });
-    expect(pullRequests).toHaveAttribute("aria-selected", "true");
     expect(githubActions).toHaveAttribute("aria-selected", "false");
     expect(schedules).toHaveAttribute("aria-selected", "true");
-    expect(screen.getAllByRole("button", { name: /Reorder/ })).toHaveLength(3);
+    expect(screen.getAllByRole("button", { name: /Reorder/ })).toHaveLength(2);
 
     fireEvent.click(githubActions);
     expect(useSharedSettings.getState().sidebarHiddenShortcuts).toEqual([]);
-    expect(trigger).toHaveTextContent("3 / 3");
+    expect(trigger).toHaveTextContent("2 / 2");
   });
 
   it("persists the Windows startup preferences", () => {

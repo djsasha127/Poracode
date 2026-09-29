@@ -25,6 +25,9 @@ const buildDefines = {
   __BUILD_SENTRY_DSN__: JSON.stringify(readEnvValue("SENTRY_DSN")),
   __BUILD_SENTRY_ENVIRONMENT__: JSON.stringify(readEnvValue("SENTRY_ENVIRONMENT")),
   __PORACODE_CHANNEL__: JSON.stringify(channel),
+  __PORACODE_LOCAL_SIGNING_IDENTITY__: JSON.stringify(
+    process.env.PORACODE_LOCAL_SIGNING_IDENTITY === "1",
+  ),
 };
 
 function packageNameFor(moduleId: string): string | null {
@@ -88,6 +91,7 @@ const deps = {
     "electron",
     "node-pty",
     "better-sqlite3",
+    "sharp",
     "@anthropic-ai/claude-agent-sdk",
     "@cursor/sdk",
     "@opencode-ai/sdk",

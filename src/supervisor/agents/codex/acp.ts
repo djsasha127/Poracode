@@ -117,6 +117,11 @@ function toSessionRef(threadId: string): SessionRef {
   return createKnownSessionRef(threadId);
 }
 
+// Large Codex rollouts can take materially longer than the generic RPC budget
+// to reopen. Keep the bound finite, but do not abandon a valid 100+ MB session
+// before app-server has had a realistic chance to rebuild it.
+const CODEX_THREAD_RESUME_TIMEOUT_MS = 300_000;
+
 function isPlainActiveStatus(status: CodexThreadStatus): boolean {
   if (status.type !== "active") {
     return false;
@@ -529,10 +534,14 @@ export class CodexStructuredSession implements StructuredSessionHandle {
     if (sessionRef) {
       this.beginResumeActiveStatusSuppression(sessionRef.providerSessionId);
       try {
-        await this.rpc.request("thread/resume", {
-          ...threadOverrides,
-          threadId: sessionRef.providerSessionId,
-        });
+        await this.rpc.request(
+          "thread/resume",
+          {
+            ...threadOverrides,
+            threadId: sessionRef.providerSessionId,
+          },
+          CODEX_THREAD_RESUME_TIMEOUT_MS,
+        );
         threadId = sessionRef.providerSessionId;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

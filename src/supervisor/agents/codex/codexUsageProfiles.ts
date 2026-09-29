@@ -1,9 +1,14 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { collectCodex, type HostPort, type UsageSnapshot } from "@poracode/agents-usage";
-import { codexProfileKind, parseCodexProfileInstanceConfig } from "@/shared/contracts";
+import {
+  codexProfileKind,
+  isCodexProfileKind,
+  parseCodexProfileInstanceConfig,
+} from "@/shared/contracts";
 import type { SharedSettings } from "@/shared/settings";
 import { resolveCodexToken } from "../../runtime/codexCredentials";
+import { scanCodexCost } from "../../runtime/usageCostScanner";
 
 /**
  * Codex-specific usage collection for profiles: each profile owns a
@@ -15,6 +20,10 @@ import { resolveCodexToken } from "../../runtime/codexCredentials";
 export interface CodexUsageProfile {
   providerId: string;
   homeDir: string;
+}
+
+export function isCodexUsageProvider(id: string): boolean {
+  return id === "codex" || isCodexProfileKind(id);
 }
 
 function resolveNativeTildePath(rawPath: string): string {
@@ -72,5 +81,31 @@ export async function collectCodexProfile(
       fetchedAt: now,
       error: error instanceof Error ? error.message : String(error),
     };
+  }
+}
+
+/** Merge a 30-day API-rate equivalent reconstructed from Codex rollout logs. */
+export async function withCodexEstimatedCost(
+  snapshot: UsageSnapshot,
+  profiles: Map<string, CodexUsageProfile>,
+  now: number,
+): Promise<UsageSnapshot> {
+  const profile = profiles.get(snapshot.providerId);
+  // The base provider is served by the persistent, multi-source history index.
+  // Profile-specific CODEX_HOME directories retain the lightweight scanner
+  // until they are explicitly added as independently configurable sources.
+  if (snapshot.providerId === "codex") return snapshot;
+  if (!profile) return snapshot;
+  try {
+    const scan = await scanCodexCost(now, profile?.homeDir);
+    if (!scan.estimate) return snapshot;
+    return {
+      ...snapshot,
+      cost: scan.estimate.cost,
+      tokens: scan.estimate.tokens,
+      ...(scan.estimate.history ? { history: scan.estimate.history } : {}),
+    };
+  } catch {
+    return snapshot;
   }
 }

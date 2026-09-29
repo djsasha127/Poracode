@@ -8,8 +8,20 @@ const request = vi.hoisted(() =>
 );
 const initialize = vi.hoisted(() =>
   vi
-    .fn<() => Promise<{ schema: { version: number; fingerprint: string } }>>()
-    .mockResolvedValue({ schema: { version: 1, fingerprint: "fixture" } }),
+    .fn<
+      (
+        clientName?: string,
+        clientVersion?: string,
+        requestedCapabilities?: readonly string[],
+      ) => Promise<{
+        schema: { version: number; fingerprint: string };
+        grantedCapabilities: string[];
+      }>
+    >()
+    .mockResolvedValue({
+      schema: { version: 1, fingerprint: "fixture" },
+      grantedCapabilities: ["sessionMcp"],
+    }),
 );
 const disposeClient = vi.hoisted(() => vi.fn<() => void>());
 const terminate = vi.hoisted(() =>
@@ -56,6 +68,7 @@ vi.mock("./client", () => ({
 }));
 
 import { MuseMspStructuredSession } from "./session";
+import { MspRpcError } from "./protocol";
 
 const projectLocation: ProjectLocation = {
   kind: "wsl",
@@ -82,7 +95,7 @@ function input(
 }
 
 function sessionRecord(sessionId = "session-1"): Record<string, unknown> {
-  return { sessionId, activeTurnId: null };
+  return { sessionId, activeTurnId: null, status: "idle" };
 }
 
 async function createSession(overrides: Partial<CreateStructuredSessionInput> = {}) {
@@ -126,6 +139,10 @@ async function createSession(overrides: Partial<CreateStructuredSessionInput> = 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  initialize.mockResolvedValue({
+    schema: { version: 1, fingerprint: "fixture" },
+    grantedCapabilities: ["sessionMcp"],
+  });
   notificationHandler = undefined;
   clientErrorHandler = undefined;
   serverRequestHandler = undefined;
@@ -259,6 +276,244 @@ describe("MuseMspStructuredSession", () => {
     });
   });
 
+  it("passes enabled MCP servers into the Muse session", async () => {
+    const { session } = await createSession({
+      mcpServers: [
+        {
+          id: "crossagents",
+          name: "crossagents",
+          timeoutMs: 30_000,
+          transport: {
+            type: "http",
+            url: "http://127.0.0.1:43123/mcp",
+            headers: { Authorization: "Bearer test-token" },
+          },
+        },
+      ],
+    });
+
+    await session.openThread(config);
+
+    expect(initialize).toHaveBeenCalledWith("poracode", "1.0.0", ["sessionMcp"]);
+
+    expect(request).toHaveBeenCalledWith(
+      "session/start",
+      expect.objectContaining({
+        config: {
+          mcpServers: {
+            crossagents: {
+              transport: "streamableHttp",
+              url: "http://127.0.0.1:43123/mcp",
+              headers: { Authorization: "Bearer test-token" },
+              mode: "required",
+            },
+          },
+        },
+      }),
+    );
+  });
+
+  it("falls back to Muse's sealed approval ceiling without dropping session MCP", async () => {
+    const { session } = await createSession({
+      config: { ...config, approvalPolicy: "yolo" },
+      mcpServers: [
+        {
+          id: "crossagents",
+          name: "crossagents",
+          timeoutMs: 30_000,
+          transport: { type: "http", url: "http://127.0.0.1:43123/mcp", headers: {} },
+        },
+      ],
+    });
+    let starts = 0;
+    request.mockImplementation(async (method) => {
+      if (method === "session/start" && starts++ === 0) {
+        throw new MspRpcError("approval mode exceeds sealed startup mode", {
+          code: -32_052,
+          kind: "commandRejected",
+          data: { reason: "approval_mode_ceiling" },
+        });
+      }
+      if (method === "session/start") return { session: sessionRecord() };
+      return { status: "accepted" };
+    });
+
+    await expect(session.openThread({ ...config, approvalPolicy: "yolo" })).resolves.toBe(
+      "session-1",
+    );
+    const startsParams = request.mock.calls
+      .filter(([method]) => method === "session/start")
+      .map(([, params]) => params);
+    expect(startsParams).toHaveLength(2);
+    expect(startsParams[0]).toMatchObject({ approvalMode: "allowAll" });
+    expect(startsParams[1]).toMatchObject({
+      approvalMode: "promptUnmatched",
+      config: { mcpServers: { crossagents: expect.anything() } },
+    });
+  });
+
+  it("omits session MCP config when the host does not grant the capability", async () => {
+    initialize.mockResolvedValue({
+      schema: { version: 1, fingerprint: "fixture" },
+      grantedCapabilities: [],
+    });
+    const { session } = await createSession({
+      mcpServers: [
+        {
+          id: "crossagents",
+          name: "crossagents",
+          timeoutMs: 30_000,
+          transport: { type: "http", url: "http://127.0.0.1:43123/mcp", headers: {} },
+        },
+      ],
+    });
+
+    await session.openThread(config);
+
+    const start = request.mock.calls.find(([method]) => method === "session/start");
+    expect(start?.[1]).not.toHaveProperty("config");
+  });
+
+  it("reattaches an idle-unloaded session and retries the same turn", async () => {
+    const { session, errors } = await createSession({
+      sessionRef: { providerSessionId: "session-1", discoveredAt: "test" },
+    });
+    let turnAttempts = 0;
+    request.mockImplementation(async (method) => {
+      if (method === "session/resume") {
+        return { session: sessionRecord(), viewCursor: "v:session-1:2" };
+      }
+      if (method === "turn/start") {
+        turnAttempts += 1;
+        if (turnAttempts === 1) {
+          throw new Error("session session-1 is not loaded on this host");
+        }
+        return { turnId: "turn-after-resume", disposition: "started" };
+      }
+      return { status: "accepted" };
+    });
+
+    await session.openThread(config);
+    request.mockClear();
+    await expect(session.startTurn("continue", config)).resolves.toBeUndefined();
+
+    const calls = request.mock.calls;
+    expect(calls.filter(([method]) => method === "turn/start")).toHaveLength(2);
+    expect(calls.filter(([method]) => method === "session/resume")).toHaveLength(1);
+    const turnCommands = calls
+      .filter(([method]) => method === "turn/start")
+      .map(([, params]) => params?.["commandId"]);
+    expect(new Set(turnCommands).size).toBe(1);
+    expect(errors).toEqual([]);
+  });
+
+  it("rotates corrupted compacted history and retries a duplicate tool-output turn once", async () => {
+    const { session, runtimeEvents, updates, errors } = await createSession();
+    let sessionStarts = 0;
+    let turnStarts = 0;
+    request.mockImplementation(async (method, params) => {
+      if (method === "session/start") {
+        sessionStarts += 1;
+        return {
+          session: sessionRecord(sessionStarts === 1 ? "session-broken" : "session-fresh"),
+        };
+      }
+      if (method === "turn/start") {
+        turnStarts += 1;
+        return {
+          turnId: turnStarts === 1 ? "turn-broken" : "turn-retried",
+          disposition: "started",
+        };
+      }
+      if (method === "view/page") return { events: [] };
+      return { status: "accepted", params };
+    });
+
+    await session.openThread(config);
+    await session.startTurn("continue after compaction", config, undefined, {
+      userMessageItemId: "user-once",
+    });
+    notificationHandler?.("turn/completed", {
+      sessionId: "session-broken",
+      turnId: "turn-broken",
+      terminal: "failed",
+      error: {
+        message:
+          "Duplicate function_call_output for call_id 'call-1'. Each function_call must have exactly one matching function_call_output",
+      },
+    });
+
+    await vi.waitFor(() => expect(turnStarts).toBe(2));
+    const retried = request.mock.calls.filter(([method]) => method === "turn/start").at(-1)?.[1];
+    expect(retried).toMatchObject({
+      sessionId: "session-fresh",
+      displayText: "continue after compaction",
+    });
+    expect(updates.at(-1)).toMatchObject({
+      status: "working",
+      sessionRef: { providerSessionId: "session-fresh" },
+    });
+    expect(errors).toEqual([]);
+    expect(runtimeEvents).not.toContainEqual(
+      expect.objectContaining({ type: "error", message: expect.stringContaining("Duplicate") }),
+    );
+
+    notificationHandler?.("turn/completed", {
+      sessionId: "session-fresh",
+      turnId: "turn-retried",
+      terminal: "completed",
+    });
+    expect(runtimeEvents).toContainEqual({
+      type: "turn.completed",
+      threadId: "thread-1",
+      turnId: "turn-retried",
+      state: "completed",
+    });
+  });
+
+  it("settles a failed history recovery once without a synthetic replacement turn", async () => {
+    const { session, runtimeEvents } = await createSession();
+    let sessionStarts = 0;
+    request.mockImplementation(async (method) => {
+      if (method === "session/start") {
+        sessionStarts += 1;
+        if (sessionStarts === 1) return { session: sessionRecord("session-broken") };
+        throw new Error("replacement session unavailable");
+      }
+      if (method === "turn/start") {
+        return { turnId: "turn-broken", disposition: "started" };
+      }
+      return { status: "accepted" };
+    });
+
+    await session.openThread(config);
+    await session.startTurn("continue after compaction", config);
+    notificationHandler?.("turn/completed", {
+      sessionId: "session-broken",
+      turnId: "turn-broken",
+      terminal: "failed",
+      error: {
+        message:
+          "Duplicate function_call_output for call_id 'call-1'. Each function_call must have exactly one matching function_call_output",
+      },
+    });
+
+    await vi.waitFor(() =>
+      expect(runtimeEvents.filter((event) => event.type === "turn.completed")).toContainEqual({
+        type: "turn.completed",
+        threadId: "thread-1",
+        turnId: "turn-broken",
+        state: "failed",
+      }),
+    );
+    expect(runtimeEvents.filter((event) => event.type === "error")).toHaveLength(1);
+    expect(
+      runtimeEvents.filter(
+        (event) => event.type === "turn.completed" && event.turnId !== "turn-broken",
+      ),
+    ).toEqual([]);
+  });
+
   it("resumes only the supplied Poracode session without replaying history", async () => {
     const { session } = await createSession({
       sessionRef: { providerSessionId: "session-1", discoveredAt: "2026-01-01T00:00:00Z" },
@@ -268,6 +523,348 @@ describe("MuseMspStructuredSession", () => {
       "session/resume",
       expect.objectContaining({ sessionId: "session-1", excludeItems: true }),
     );
+  });
+
+  it("replays only the durable suffix after a persisted provider cursor", async () => {
+    const { session, runtimeEvents } = await createSession({
+      sessionRef: {
+        providerSessionId: "session-1",
+        discoveredAt: "2026-01-01T00:00:00Z",
+        providerCursor: "cursor-persisted",
+      },
+    });
+    request.mockImplementation(async (method, params) => {
+      if (method === "session/resume") {
+        return { session: sessionRecord(), viewCursor: "" };
+      }
+      if (method === "view/page") {
+        if (params?.["direction"] === "backward") {
+          return {
+            events: [
+              {
+                method: "turn/completed",
+                params: {
+                  sessionId: "session-1",
+                  viewCursor: "cursor-current-head",
+                  turnId: "turn-after-restart",
+                  terminal: "completed",
+                },
+              },
+            ],
+            nextCursor: "cursor-current-head",
+          };
+        }
+        return {
+          events: [
+            {
+              method: "item/completed",
+              params: {
+                sessionId: "session-1",
+                viewCursor: "cursor-answer",
+                item: {
+                  itemId: "assistant-after-restart",
+                  kind: "assistantMessage",
+                  status: "completed",
+                  text: "Recovered after restart",
+                },
+              },
+            },
+            {
+              method: "turn/completed",
+              params: {
+                sessionId: "session-1",
+                viewCursor: "cursor-current-head",
+                turnId: "turn-after-restart",
+                terminal: "completed",
+              },
+            },
+          ],
+          nextCursor: null,
+        };
+      }
+      return { status: "accepted" };
+    });
+
+    await session.openThread(config);
+
+    expect(request).toHaveBeenCalledWith("view/page", {
+      sessionId: "session-1",
+      direction: "backward",
+      limit: 1,
+    });
+    expect(request).toHaveBeenCalledWith("view/page", {
+      sessionId: "session-1",
+      cursor: "cursor-persisted",
+      direction: "forward",
+      limit: 1_000,
+    });
+    expect(runtimeEvents).toContainEqual(
+      expect.objectContaining({
+        type: "item.started",
+        itemId: "assistant-after-restart",
+        itemType: "assistant_message",
+      }),
+    );
+    expect(runtimeEvents).toContainEqual({
+      type: "turn.completed",
+      threadId: "thread-1",
+      turnId: "turn-after-restart",
+      state: "completed",
+    });
+  });
+
+  it("fills a dropped Muse view range before applying later live notifications", async () => {
+    const { session, runtimeEvents, updates } = await createSession();
+    request.mockImplementation(async (method) => {
+      if (method === "session/start") return { session: sessionRecord() };
+      if (method === "turn/start") {
+        return { turnId: "turn-1", status: "accepted", disposition: "started" };
+      }
+      if (method === "view/page") {
+        return {
+          events: [
+            {
+              method: "item/completed",
+              params: {
+                sessionId: "session-1",
+                viewCursor: "cursor-assistant",
+                item: {
+                  itemId: "assistant-1",
+                  kind: "assistantMessage",
+                  status: "completed",
+                  text: "Recovered answer",
+                },
+              },
+            },
+            {
+              method: "turn/completed",
+              params: {
+                sessionId: "session-1",
+                viewCursor: "cursor-terminal",
+                turnId: "turn-1",
+                terminal: "completed",
+              },
+            },
+            {
+              method: "session/tokenUsage",
+              params: {
+                sessionId: "session-1",
+                viewCursor: "cursor-live",
+                cumulative: { totalTokens: 42 },
+              },
+            },
+          ],
+          nextCursor: null,
+        };
+      }
+      return { status: "accepted" };
+    });
+
+    await session.openThread(config);
+    await session.startTurn("hello", config);
+    notificationHandler?.("view/gap", {
+      sessionId: "session-1",
+      after: "cursor-before-gap",
+      next: "cursor-live",
+    });
+    notificationHandler?.("session/tokenUsage", {
+      sessionId: "session-1",
+      viewCursor: "cursor-live",
+      cumulative: { totalTokens: 42 },
+    });
+
+    await vi.waitFor(() => {
+      expect(runtimeEvents).toContainEqual(
+        expect.objectContaining({
+          type: "item.started",
+          itemId: "assistant-1",
+          itemType: "assistant_message",
+        }),
+      );
+      expect(runtimeEvents).toContainEqual({
+        type: "turn.completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        state: "completed",
+      });
+      expect(runtimeEvents).toContainEqual(
+        expect.objectContaining({
+          type: "usage.spent",
+          usage: expect.objectContaining({ counter: 42 }),
+        }),
+      );
+    });
+    expect(updates.at(-1)).toMatchObject({ status: "idle", attention: "none" });
+    expect(request).toHaveBeenCalledWith("view/page", {
+      sessionId: "session-1",
+      cursor: "cursor-before-gap",
+      direction: "forward",
+      limit: 1_000,
+    });
+  });
+
+  it("recovers a dropped terminal tail even when no later push reports a gap", async () => {
+    vi.useFakeTimers();
+    try {
+      const { session, runtimeEvents, updates } = await createSession();
+      request.mockImplementation(async (method) => {
+        if (method === "session/start") {
+          return { session: sessionRecord(), viewCursor: "cursor-before-turn" };
+        }
+        if (method === "turn/start") {
+          return { turnId: "turn-1", status: "accepted", disposition: "started" };
+        }
+        if (method === "session/read") {
+          return { viewCursor: "cursor-terminal" };
+        }
+        if (method === "view/page") {
+          return {
+            events: [
+              {
+                method: "item/completed",
+                params: {
+                  sessionId: "session-1",
+                  viewCursor: "cursor-assistant",
+                  item: {
+                    itemId: "assistant-tail",
+                    kind: "assistantMessage",
+                    status: "completed",
+                    text: "Recovered final answer",
+                  },
+                },
+              },
+              {
+                method: "turn/completed",
+                params: {
+                  sessionId: "session-1",
+                  viewCursor: "cursor-terminal",
+                  turnId: "turn-1",
+                  terminal: "completed",
+                },
+              },
+            ],
+            nextCursor: null,
+          };
+        }
+        return { status: "accepted" };
+      });
+
+      await session.openThread(config);
+      await session.startTurn("hello", config);
+      await vi.advanceTimersByTimeAsync(2_100);
+
+      expect(runtimeEvents).toContainEqual(
+        expect.objectContaining({
+          type: "item.started",
+          itemId: "assistant-tail",
+          itemType: "assistant_message",
+        }),
+      );
+      expect(runtimeEvents).toContainEqual({
+        type: "turn.completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        state: "completed",
+      });
+      expect(updates.at(-1)).toMatchObject({ status: "idle", attention: "none" });
+      await session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a historical failed turn from replacing the live turn during tail recovery", async () => {
+    vi.useFakeTimers();
+    try {
+      const { session, runtimeEvents, updates } = await createSession();
+      request.mockImplementation(async (method) => {
+        if (method === "session/start") {
+          return { session: sessionRecord(), viewCursor: "cursor-before-turn" };
+        }
+        if (method === "turn/start") {
+          return { turnId: "turn-1", disposition: "started" };
+        }
+        if (method === "session/read") {
+          return { session: sessionRecord(), viewCursor: "cursor-answer" };
+        }
+        if (method === "view/page") {
+          return {
+            events: [
+              {
+                method: "turn/started",
+                params: {
+                  sessionId: "session-1",
+                  viewCursor: "cursor-old-start",
+                  turnId: "turn-old",
+                },
+              },
+              {
+                method: "turn/completed",
+                params: {
+                  sessionId: "session-1",
+                  viewCursor: "cursor-old-failure",
+                  turnId: "turn-old",
+                  terminal: "failed",
+                  reason: "incomplete",
+                },
+              },
+              {
+                method: "item/completed",
+                params: {
+                  sessionId: "session-1",
+                  viewCursor: "cursor-assistant",
+                  item: {
+                    itemId: "assistant-after-incomplete-ack",
+                    kind: "assistantMessage",
+                    status: "completed",
+                    text: "SESSION_OK",
+                  },
+                },
+              },
+              {
+                method: "turn/completed",
+                params: {
+                  sessionId: "session-1",
+                  viewCursor: "cursor-answer",
+                  turnId: "turn-1",
+                  terminal: "completed",
+                },
+              },
+            ],
+            nextCursor: null,
+          };
+        }
+        return { status: "accepted" };
+      });
+
+      await session.openThread(config);
+      await session.startTurn("hello", config);
+      await vi.advanceTimersByTimeAsync(2_100);
+
+      expect(runtimeEvents).toContainEqual(
+        expect.objectContaining({
+          type: "item.started",
+          itemId: "assistant-after-incomplete-ack",
+        }),
+      );
+      expect(runtimeEvents).toContainEqual({
+        type: "turn.completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        state: "completed",
+      });
+      expect(runtimeEvents).not.toContainEqual(
+        expect.objectContaining({ type: "error", message: "incomplete" }),
+      );
+      expect(updates.at(-1)).toMatchObject({
+        status: "idle",
+        attention: "none",
+        sessionRef: { providerCursor: "cursor-answer" },
+      });
+      await session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("acknowledges re-issued server requests and restores resumed active turns", async () => {
@@ -404,6 +1001,83 @@ describe("MuseMspStructuredSession", () => {
     expect(request).toHaveBeenCalledWith(
       "session/setApprovalMode",
       expect.objectContaining({ mode: "onRequest" }),
+    );
+  });
+
+  it("keeps the Poracode dialogue usable when Muse rejects malformed resume history", async () => {
+    const { session, runtimeEvents } = await createSession({
+      sessionRef: { providerSessionId: "session-broken", discoveredAt: "2026-01-01T00:00:00Z" },
+    });
+    request.mockImplementation(async (method) => {
+      if (method === "session/resume") {
+        throw new Error("internal error: classify turns: session fork rejected: MalformedJsonl");
+      }
+      if (method === "session/start") return { session: sessionRecord("session-fresh") };
+      return { status: "accepted" };
+    });
+
+    await expect(session.openThread(config)).resolves.toBe("session-fresh");
+    expect(request).toHaveBeenCalledWith(
+      "session/start",
+      expect.objectContaining({ modelId: config.model }),
+    );
+    expect(runtimeEvents).toContainEqual(
+      expect.objectContaining({
+        type: "warning",
+        message: expect.stringContaining("kept this dialogue"),
+      }),
+    );
+  });
+
+  it("rotates a Muse session whose materialized view has a stale sidecar", async () => {
+    const { session, runtimeEvents } = await createSession({
+      sessionRef: { providerSessionId: "session-stale", discoveredAt: "2026-01-01T00:00:00Z" },
+    });
+    request.mockImplementation(async (method) => {
+      if (method === "session/resume") {
+        throw new Error(
+          "internal error: read materialized session view: forward fold range read failed: materialized projection head: stale sidecar generation",
+        );
+      }
+      if (method === "session/start") return { session: sessionRecord("session-fresh") };
+      return { status: "accepted" };
+    });
+
+    await expect(session.openThread(config)).resolves.toBe("session-fresh");
+    expect(request).toHaveBeenCalledWith(
+      "session/start",
+      expect.objectContaining({ modelId: config.model }),
+    );
+    expect(runtimeEvents).toContainEqual(
+      expect.objectContaining({
+        type: "warning",
+        message: expect.stringContaining("kept this dialogue"),
+      }),
+    );
+  });
+
+  it("keeps the Poracode dialogue usable when another client owns the Muse session", async () => {
+    const { session, runtimeEvents } = await createSession({
+      sessionRef: { providerSessionId: "session-busy", discoveredAt: "2026-01-01T00:00:00Z" },
+    });
+    request.mockImplementation(async (method) => {
+      if (method === "session/resume") {
+        throw new Error("session session-busy is already in use");
+      }
+      if (method === "session/start") return { session: sessionRecord("session-fresh") };
+      return { status: "accepted" };
+    });
+
+    await expect(session.openThread(config)).resolves.toBe("session-fresh");
+    expect(request).toHaveBeenCalledWith(
+      "session/start",
+      expect.objectContaining({ modelId: config.model }),
+    );
+    expect(runtimeEvents).toContainEqual(
+      expect.objectContaining({
+        type: "warning",
+        message: expect.stringContaining("kept this dialogue"),
+      }),
     );
   });
 
@@ -654,7 +1328,6 @@ describe("MuseMspStructuredSession", () => {
   });
 
   it("falls back to a fresh turn when a steer loses the completion race", async () => {
-    const { MspRpcError } = await import("./protocol");
     const { session } = await createSession();
     await session.openThread(config);
     await session.startTurn("first", config);
@@ -676,7 +1349,6 @@ describe("MuseMspStructuredSession", () => {
   });
 
   it("retargets a steer when a newer turn starts before the stale rejection", async () => {
-    const { MspRpcError } = await import("./protocol");
     const { session } = await createSession();
     await session.openThread(config);
     await session.startTurn("first", config);
@@ -743,7 +1415,6 @@ describe("MuseMspStructuredSession", () => {
   });
 
   it("keeps one user row when a rejected steer falls back to a fresh turn", async () => {
-    const { MspRpcError } = await import("./protocol");
     const { session, runtimeEvents } = await createSession();
     await session.openThread(config);
     await session.startTurn("first", config);
@@ -913,10 +1584,17 @@ describe("MuseMspStructuredSession", () => {
   it("auto-approves host approvals under bypass policies", async () => {
     // `allowAll` still raises approvals for pipelines the host cannot parse,
     // and `muse serve` has no flag to disable them.
-    const { session, runtimeEvents } = await createSession({
+    const { session, runtimeEvents, updates } = await createSession({
       config: { ...config, approvalPolicy: "yolo" },
     });
     await session.openThread({ ...config, approvalPolicy: "yolo" });
+    // A resumed host can echo its old mode after Poracode has reconciled it.
+    // The user's bypass selection remains authoritative for host approvals.
+    notificationHandler?.("session/approvalModeChanged", {
+      sessionId: "session-1",
+      mode: "onRequest",
+    });
+    expect(updates.at(-1)?.config?.approvalPolicy).toBe("yolo");
     notificationHandler?.("approval/requested", approvalNotification);
     await Promise.resolve();
     expect(request).toHaveBeenCalledWith(
@@ -926,6 +1604,94 @@ describe("MuseMspStructuredSession", () => {
     expect(runtimeEvents).not.toContainEqual(
       expect.objectContaining({ type: "request.opened", requestId: "approval-auto" }),
     );
+  });
+
+  it("continues auto-approval when Muse advances a pipeline before decide settles", async () => {
+    let releaseFirstDecision!: (value: Record<string, unknown>) => void;
+    const firstDecision = new Promise<Record<string, unknown>>((resolve) => {
+      releaseFirstDecision = resolve;
+    });
+    let decideCalls = 0;
+    const { session, runtimeEvents } = await createSession({
+      config: { ...config, approvalPolicy: "yolo" },
+    });
+    await session.openThread({ ...config, approvalPolicy: "yolo" });
+    request.mockImplementation(async (method) => {
+      if (method === "approval/decide" && decideCalls++ === 0) return firstDecision;
+      return { status: "accepted" };
+    });
+
+    notificationHandler?.("approval/requested", approvalNotification);
+    notificationHandler?.("approval/updated", {
+      ...approvalNotification,
+      currentRequirementId: { approvalId: "approval-auto", sourceIndex: 1 },
+      availableChoices: [
+        { choiceId: "allow-next", decision: "approved", label: "Allow next", scope: "once" },
+      ],
+    });
+    releaseFirstDecision({ status: "accepted", terminal: false });
+
+    await vi.waitFor(() => {
+      expect(request).toHaveBeenCalledWith(
+        "approval/decide",
+        expect.objectContaining({
+          approvalId: "approval-auto",
+          requirementId: { approvalId: "approval-auto", sourceIndex: 1 },
+          choiceId: "allow-next",
+        }),
+      );
+    });
+    expect(runtimeEvents).not.toContainEqual(
+      expect.objectContaining({ type: "request.opened", requestId: "approval-auto" }),
+    );
+  });
+
+  it("recovers and auto-approves an approval missed by push delivery", async () => {
+    const { session, runtimeEvents } = await createSession({
+      config: { ...config, approvalPolicy: "yolo" },
+    });
+    request.mockImplementation(async (method) => {
+      if (method === "session/start") return { session: sessionRecord() };
+      if (method === "approval/listPending") {
+        return { approvals: [approvalNotification], userInputs: [] };
+      }
+      return { status: "accepted" };
+    });
+    await session.openThread({ ...config, approvalPolicy: "yolo" });
+
+    await vi.waitFor(() => {
+      expect(request).toHaveBeenCalledWith(
+        "approval/decide",
+        expect.objectContaining({ approvalId: "approval-auto", choiceId: "allow_once" }),
+      );
+    });
+    expect(runtimeEvents).not.toContainEqual(
+      expect.objectContaining({ type: "request.opened", requestId: "approval-auto" }),
+    );
+    await session.dispose();
+  });
+
+  it("surfaces an approval if an automatic bypass decision fails", async () => {
+    const { session, runtimeEvents, updates } = await createSession({
+      config: { ...config, approvalPolicy: "yolo" },
+    });
+    await session.openThread({ ...config, approvalPolicy: "yolo" });
+    request.mockImplementation(async (method) => {
+      if (method === "approval/decide") throw new Error("approval command rejected");
+      return { status: "accepted" };
+    });
+
+    notificationHandler?.("approval/requested", approvalNotification);
+
+    await vi.waitFor(() => {
+      expect(runtimeEvents).toContainEqual(
+        expect.objectContaining({ type: "request.opened", requestId: "approval-auto" }),
+      );
+      expect(updates.at(-1)).toMatchObject({
+        status: "needs_approval",
+        attention: "needs_approval",
+      });
+    });
   });
 
   it("still surfaces host approvals under ask policies", async () => {

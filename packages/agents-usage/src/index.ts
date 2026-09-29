@@ -21,10 +21,23 @@ export {
   parseSetCookie,
   serializeCookieHeader,
 } from "./cookieJar";
-export { priceTokens, rateForModel, PRICING_TABLE_REVIEWED } from "./pricing";
-export type { ModelRate } from "./pricing";
-export { aggregateClaudeCost } from "./cost";
-export type { CostEstimate } from "./cost";
+export {
+  priceTokens,
+  rateForModel,
+  resolveModelRate,
+  PRICING_TABLE_REVIEWED,
+  PRICING_TABLE_REVISION,
+} from "./pricing";
+export type { ModelRate, ResolvedModelRate } from "./pricing";
+export {
+  aggregateClaudeCost,
+  aggregateClaudeCostLines,
+  aggregateCodexCost,
+  aggregateCodexCostLines,
+  createUsageCostAccumulator,
+  mergeCostEstimates,
+} from "./cost";
+export type { CostEstimate, UsageCostAccumulator, UsageCostSample } from "./cost";
 export { aggregateOpenCodeUsage, OPENCODE_LIMITS } from "./openCode";
 export type { OpenCodeCostRow } from "./openCode";
 export {

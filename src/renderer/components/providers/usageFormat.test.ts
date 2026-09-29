@@ -1,12 +1,13 @@
 // @vitest-environment node
 
 import { describe, expect, it } from "vitest";
-import type { UsageSnapshot, UsageWindow } from "@poracode/agents-usage";
+import type { UsageHistory, UsageSnapshot, UsageWindow } from "@poracode/agents-usage";
 import {
   formatCreditBalance,
   formatWindowSecondaryValue,
   formatWindowValue,
   hasDisplayableCredits,
+  summarizeUsageHistory,
   usageStatusText,
 } from "./usageFormat";
 
@@ -83,9 +84,9 @@ describe("formatWindowValue / formatWindowSecondaryValue", () => {
     limit: 3,
   };
 
-  it("shows percent as the primary value for USD windows", () => {
-    expect(formatWindowValue(usdWindow)).toBe("100%");
-    expect(formatWindowValue({ ...usdWindow, usedPercent: 56.8 })).toBe("57%");
+  it("shows remaining and used percent as the primary value for USD windows", () => {
+    expect(formatWindowValue(usdWindow)).toBe("Remaining 0% · Used 100%");
+    expect(formatWindowValue({ ...usdWindow, usedPercent: 56.8 })).toBe("Remaining 43% · Used 57%");
   });
 
   it("puts the dollar spend in the muted secondary label", () => {
@@ -113,7 +114,7 @@ describe("formatWindowValue / formatWindowSecondaryValue", () => {
     ).toBeUndefined();
   });
 
-  it("keeps percent primary for credit windows", () => {
+  it("keeps remaining and used percent primary for credit windows", () => {
     expect(
       formatWindowValue({
         id: "monthly",
@@ -123,7 +124,7 @@ describe("formatWindowValue / formatWindowSecondaryValue", () => {
         used: 766,
         limit: 6000,
       }),
-    ).toBe("13%");
+    ).toBe("Remaining 87% · Used 13%");
   });
 
   it("puts credit counts in the muted secondary label", () => {
@@ -146,5 +147,49 @@ describe("formatWindowValue / formatWindowSecondaryValue", () => {
         used: 300,
       }),
     ).toBe("300");
+  });
+});
+
+describe("summarizeUsageHistory", () => {
+  it("sums every retained month without mixing it into the rolling window", () => {
+    const history: UsageHistory = {
+      months: [
+        {
+          month: "2026-09",
+          tokens: {
+            total: 1_200,
+            input: 200,
+            output: 100,
+            cacheRead: 900,
+            cacheWrite: 0,
+            priced: 1_000,
+            proxyPriced: 100,
+          },
+          estimatedCostUsd: 1.2345678,
+          models: [],
+        },
+        {
+          month: "2026-08",
+          tokens: {
+            total: 800,
+            input: 100,
+            output: 100,
+            cacheRead: 600,
+            cacheWrite: 0,
+            priced: 800,
+            proxyPriced: 0,
+          },
+          estimatedCostUsd: 2.1,
+          models: [],
+        },
+      ],
+    };
+
+    expect(summarizeUsageHistory(history)).toEqual({
+      estimatedCostUsd: 3.334568,
+      tokens: 2_000,
+      pricedTokens: 1_800,
+      proxyPricedTokens: 100,
+    });
   });
 });

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, ChevronDown, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, RotateCcw, X } from "lucide-react";
 import { useLingui } from "@lingui/react/macro";
 import { localizeCatalogMessage } from "@/shared/messages";
 import type { ThreadErrorDockState } from "./threadErrorState";
@@ -8,10 +8,11 @@ import { ThreadDockHeader, ThreadDockIconButton, ThreadDockSection } from "./Thr
 interface ThreadErrorDockProps {
   state: ThreadErrorDockState;
   onDismiss?: () => void;
+  onRestoreMessage?: () => void;
 }
 
 export function ThreadErrorDock(props: ThreadErrorDockProps) {
-  const { state, onDismiss } = props;
+  const { state, onDismiss, onRestoreMessage } = props;
   const { t } = useLingui();
   const [collapsed, setCollapsed] = useState(true);
   const message = localizeCatalogMessage(state.message);
@@ -27,6 +28,15 @@ export function ThreadErrorDock(props: ThreadErrorDockProps) {
         title={title}
         actions={
           <>
+            {onRestoreMessage ? (
+              <ThreadDockIconButton
+                label={t`Restore message`}
+                tooltip={t`Restore message`}
+                onPress={onRestoreMessage}
+              >
+                <RotateCcw className="size-3.5" />
+              </ThreadDockIconButton>
+            ) : null}
             {canExpand ? (
               <ThreadDockIconButton
                 label={collapsed ? t`Expand error` : t`Collapse error`}

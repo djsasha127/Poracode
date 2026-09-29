@@ -1,5 +1,7 @@
 import type {
   BrowseHostDirectoryResult,
+  ProfileTokenStats,
+  ProviderUsageResponse,
   Project,
   RemoteThreadCommand,
   Thread,
@@ -44,6 +46,10 @@ export interface RemoteServerRuntime {
   readonly projects: RemoteShellSnapshot["projects"];
   readonly threads: RemoteShellSnapshot["threads"];
   readonly agentStatuses?: RemoteAgentStatuses;
+  /** Usage collected by this host, kept separate from the local supervisor. */
+  readonly providerUsage?: ProviderUsageResponse;
+  /** Durable token and API-equivalent cost totals computed on this host. */
+  readonly profileTokenStats?: ProfileTokenStats;
 }
 
 export interface OpenRemoteThread {
@@ -99,13 +105,15 @@ export interface RemoteServersState {
     options?: { readonly isPendingLaunchOwned?: () => boolean },
   ): Promise<RemoteThreadLaunchResult>;
   /**
-   * Hydrate a remote thread's history and focus it. Never rejects. Resolves
-   * `true` only when the snapshot was actually applied — `false` when the
-   * server is missing/unreachable or a newer open superseded this one, so
-   * callers can gate follow-up work (e.g. relaunching an inactive thread) on
-   * the open having taken effect.
+   * Hydrate a remote thread's history and, by default, focus it. Pass
+   * `activate: false` when a pane layout already chose exactly where the
+   * thread belongs (for example a sidebar drag-and-drop). Never rejects.
    */
-  openRemoteThread(desktopId: string, threadId: string): Promise<boolean>;
+  openRemoteThread(
+    desktopId: string,
+    threadId: string,
+    options?: { readonly activate?: boolean },
+  ): Promise<boolean>;
   closeRemoteThread(): void;
   sendThreadCommand(desktopId: string, command: RemoteThreadCommand): Promise<void>;
   pairServer(input: { endpoint: string; token: string }): Promise<RemoteServerRecord>;
@@ -116,6 +124,12 @@ export interface RemoteServersState {
     desktopId: string,
     options?: { readonly includeAgentStatuses?: boolean },
   ): Promise<void>;
+  /** Refresh usage for one remote host without affecting its connection state. */
+  refreshProviderUsage(desktopId: string, providerIds?: readonly string[]): Promise<void>;
+  /** Seal an API key on the remote host and refresh that provider. */
+  setProviderUsageApiKey(desktopId: string, providerId: string, apiKey: string): Promise<void>;
+  /** Refresh durable token/cost totals for one remote host. */
+  refreshProfileTokenStats(desktopId: string): Promise<void>;
   scheduleServerRefresh(
     desktopId: string,
     options?: { readonly includeAgentStatuses?: boolean },

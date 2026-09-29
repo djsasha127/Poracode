@@ -65,9 +65,16 @@ export function persistThreadStateEvent(event: ThreadStateEvent): void {
   // "working"/"launching" state.
   const nowIso = new Date().toISOString();
   const turnTiming = deriveTurnTiming(thread, event.status, nowIso);
-  const nextSessionRef =
-    event.sessionRef && thread.sessionRef?.providerSessionId !== event.sessionRef.providerSessionId
-      ? event.sessionRef
+  const providerSessionChanged =
+    event.sessionRef !== undefined &&
+    thread.sessionRef?.providerSessionId !== event.sessionRef.providerSessionId;
+  const providerCursorChanged =
+    event.sessionRef?.providerCursor !== undefined &&
+    thread.sessionRef?.providerCursor !== event.sessionRef.providerCursor;
+  const nextSessionRef = providerSessionChanged
+    ? event.sessionRef
+    : providerCursorChanged && event.sessionRef && thread.sessionRef
+      ? { ...thread.sessionRef, providerCursor: event.sessionRef.providerCursor }
       : thread.sessionRef;
 
   dbUpsertThread(

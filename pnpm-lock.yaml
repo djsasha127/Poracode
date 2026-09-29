@@ -358,6 +358,9 @@ importers:
       remark-parse:
         specifier: ^11.0.0
         version: 11.0.0(supports-color@10.2.2)
+      sharp:
+        specifier: 0.35.4
+        version: 0.35.4(@types/node@26.4.1)
       shiki:
         specifier: ^4.4.3
         version: 4.4.3
@@ -521,9 +524,6 @@ importers:
       react-devtools:
         specifier: ^7.0.1
         version: 7.0.1(supports-color@10.2.2)
-      sharp:
-        specifier: 0.35.4
-        version: 0.35.4(@types/node@26.4.1)
       tsdown:
         specifier: ^0.22.14
         version: 0.22.14(typescript@7.0.2)

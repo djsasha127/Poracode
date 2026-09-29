@@ -34,14 +34,17 @@ export function createCodexUsageSpentEvent(
   params: Record<string, unknown> | undefined,
   meta: { scopeId: string; epoch: number; fresh?: boolean },
 ): RuntimeEvent | undefined {
-  const counter = readCodexCumulativeTotalTokens(params);
+  const total = readCodexCumulativeUsageRecord(params);
+  const counter = readTotalTokens(total);
   if (counter === undefined) return undefined;
+  const breakdown = total ? readCodexBillableBreakdown(total) : undefined;
   return {
     type: "usage.spent",
     threadId,
     usage: {
       counterKind: "cumulative",
       counter,
+      ...(breakdown ? { breakdown } : {}),
       scopeId: meta.scopeId,
       epoch: meta.epoch,
       ...(meta.fresh ? { fresh: true } : {}),
@@ -56,24 +59,70 @@ export function createCodexUsageSpentEvent(
 export function readCodexCumulativeTotalTokens(
   params: Record<string, unknown> | undefined,
 ): number | undefined {
+  return readTotalTokens(readCodexCumulativeUsageRecord(params));
+}
+
+function readCodexCumulativeUsageRecord(
+  params: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
   const currentTokenUsage = readRecord(params?.tokenUsage);
-  const fromCurrent = readTotalTokens(readRecord(currentTokenUsage?.total));
+  const fromCurrent = readRecord(currentTokenUsage?.total);
   if (fromCurrent !== undefined) return fromCurrent;
 
   const legacy = readRecord(params?.token_usage) ?? currentTokenUsage;
-  const fromLegacy = readTotalTokens(
+  const fromLegacy =
     readRecord(legacy?.total) ??
-      readRecord(legacy?.totalTokenUsage) ??
-      readRecord(legacy?.total_token_usage),
-  );
+    readRecord(legacy?.totalTokenUsage) ??
+    readRecord(legacy?.total_token_usage);
   if (fromLegacy !== undefined) return fromLegacy;
 
   const info = readRecord(params?.info);
-  return readTotalTokens(readRecord(info?.total_token_usage) ?? readRecord(info?.totalTokenUsage));
+  return readRecord(info?.total_token_usage) ?? readRecord(info?.totalTokenUsage);
 }
 
 function readTotalTokens(total: Record<string, unknown> | undefined): number | undefined {
   return readNonNegativeInteger(total?.totalTokens) ?? readNonNegativeInteger(total?.total_tokens);
+}
+
+/**
+ * Normalize Codex's cumulative usage into mutually-exclusive billable buckets.
+ * Codex reports cache reads/writes as subsets of input, while reasoning is
+ * already included in output, so cache buckets are subtracted and reasoning is
+ * not added.
+ */
+function readCodexBillableBreakdown(
+  total: Record<string, unknown>,
+): { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined {
+  const rawInput =
+    readNonNegativeInteger(total.inputTokens) ?? readNonNegativeInteger(total.input_tokens);
+  const cacheRead =
+    readNonNegativeInteger(total.cachedInputTokens) ??
+    readNonNegativeInteger(total.cached_input_tokens) ??
+    readNonNegativeInteger(total.cacheReadTokens) ??
+    readNonNegativeInteger(total.cache_read_tokens);
+  const output =
+    readNonNegativeInteger(total.outputTokens) ?? readNonNegativeInteger(total.output_tokens);
+  const cacheWrite =
+    readNonNegativeInteger(total.cacheWriteTokens) ??
+    readNonNegativeInteger(total.cache_write_tokens);
+  const input =
+    rawInput === undefined
+      ? undefined
+      : Math.max(0, rawInput - (cacheRead ?? 0) - (cacheWrite ?? 0));
+  if (
+    input === undefined &&
+    output === undefined &&
+    cacheRead === undefined &&
+    cacheWrite === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(input !== undefined ? { input } : {}),
+    ...(output !== undefined ? { output } : {}),
+    ...(cacheRead !== undefined ? { cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+  };
 }
 
 export function createCodexTokenUsageEvent(

@@ -4674,6 +4674,7 @@ describe("sdkCanonicalMapping — usage.spent", () => {
       usage: {
         counterKind: "per-call",
         counter: 20,
+        breakdown: { input: 10, output: 5, cacheWrite: 3, cacheRead: 2 },
         scopeId: "claude-session",
         epoch: 0,
         fresh: true,
@@ -4710,6 +4711,7 @@ describe("sdkCanonicalMapping — usage.spent", () => {
       usage: {
         counterKind: "per-call",
         counter: 200,
+        breakdown: { input: 100, output: 20, cacheWrite: 0, cacheRead: 80 },
         scopeId: "claude-session",
         epoch: 0,
         sampleId: "msg-sub-1:req-sub-1",

@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { WslBridgeClient } from "../wsl/bridge/client";
 import {
+  prepareStructuredAttachmentSegments,
   rewriteSegmentsForWorkspace,
   rewriteSegmentsForWsl,
   setWslAttachmentBridgeClient,
+  validateAttachmentSegments,
 } from "./threadAttachments";
 
 const dirs: string[] = [];
@@ -71,6 +73,45 @@ describe("rewriteSegmentsForWorkspace", () => {
       { kind: "text", content: "hi" },
       { kind: "attachment", path: "rel.png", mimeType: "image/png" },
     ]);
+  });
+});
+
+describe("prepareStructuredAttachmentSegments", () => {
+  it("converts SVG attachments to a provider-native PNG", async () => {
+    const sourceDir = tmp("lc-convert-image-");
+    const source = join(sourceDir, "diagram.svg");
+    writeFileSync(
+      source,
+      '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="red"/></svg>',
+    );
+
+    const segments = await prepareStructuredAttachmentSegments([
+      { kind: "attachment", path: source, mimeType: "image/svg+xml" },
+    ]);
+
+    expect(segments?.[0]).toMatchObject({ kind: "attachment", mimeType: "image/png" });
+    const output = segments?.[0]?.kind === "attachment" ? segments[0].path : "";
+    expect(output.endsWith(".png")).toBe(true);
+    expect(readFileSync(output).subarray(1, 4).toString("ascii")).toBe("PNG");
+  });
+
+  it("rejects a missing ordinary file instead of silently sending its path", async () => {
+    const sourceDir = tmp("lc-missing-attachment-");
+    const source = join(sourceDir, "missing.txt");
+
+    await expect(
+      prepareStructuredAttachmentSegments([
+        { kind: "attachment", path: source, mimeType: "text/plain" },
+      ]),
+    ).rejects.toThrow("Attachment is unavailable: missing.txt");
+  });
+
+  it("rejects directories before they reach an agent", async () => {
+    const source = tmp("lc-directory-attachment-");
+
+    await expect(
+      validateAttachmentSegments([{ kind: "attachment", path: source }]),
+    ).rejects.toThrow("Attachment is not a readable file");
   });
 });
 

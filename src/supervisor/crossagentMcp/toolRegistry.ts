@@ -73,23 +73,25 @@ const CROSSAGENTS_CORE_SKILL = uniqueCoreSkillForBuiltInMcp("crossagents");
 /** Base routing guidance always included in the MCP `initialize` instructions. */
 export const CROSSAGENT_MCP_INSTRUCTIONS_BASE = [
   "Use the Crossagents MCP server to delegate lightweight, ephemeral work to the other AI agents connected to this Poracode session.",
-  `Before the first spawn_agent call, ${loadPluginCoreSkillPhrase(CROSSAGENTS_CORE_SKILL)} — it is this plugin's core skill.`,
+  `Before the first delegate_agent call, ${loadPluginCoreSkillPhrase(CROSSAGENTS_CORE_SKILL)} — it is this plugin's core skill.`,
   "Every tool named below belongs to this server. Hosts that namespace MCP tools expose them under this server's name (for example `crossagents__list_agents` or `mcp__crossagents__list_agents`), so resolve each bare name against your own tool list and call the crossagents entry — never the same bare name under another server such as `poracode`.",
+  "Use delegate_agent for new delegation calls. It is the collision-free equivalent of spawn_agent; the latter remains only for compatibility because some Codex hosts mistakenly apply their own built-in helper-slot hook to any tool named spawn_agent.",
   "Delegate only once the user has explicitly asked you to involve another agent in this thread, for example via an @Crossagents mention or a direct request to delegate or get a second opinion. That ask authorizes delegation for the rest of the thread, so later turns may spawn as the work requires; until then, never spawn subagents on your own initiative.",
   "Call list_agents when provider selection matters; call get_agent only when you need one provider's detailed models, reasoning options, Fast availability, or permissions preset.",
-  "Classify every task with 1-5 concise lowercase tags and pass the same tags to list_agents and spawn_agent. Prefer this vocabulary when applicable: frontend, ui, design, backend, mobile, simulator, implementation, bugfix, review, testing, research, refactor, docs, devops, data. Crossagents learns tag-to-selection affinity from user-explicit selection choices without an extra model call.",
+  "Each configured account profile is a distinct provider id (for example `codex:work` or `claude:personal`). Use that exact id to delegate to the chosen account; every child still runs in this parent thread's project/worktree.",
+  "Classify every task with 1-5 concise lowercase tags and pass the same tags to list_agents and delegate_agent. Prefer this vocabulary when applicable: frontend, ui, design, backend, mobile, simulator, implementation, bugfix, review, testing, research, refactor, docs, devops, data. Crossagents learns tag-to-selection affinity from user-explicit selection choices without an extra model call.",
   "Explicit provider, model, reasoning, and Fast values always win. When the user does not specify them, omit those fields and Crossagents will resolve matching manual task routes first, then learned task tags, global explicit Crossagents usage, frequently used and favorite composer selections, then built-in order.",
   "When the user explicitly asks to always prefer a provider/model for a kind of task, call set_routing_preference with its tags and selection. This persistent manual override ranks before learned affinity. Use remove_routing_preference when the user asks to forget or reset it; do not create or remove persistent preferences without clear user intent.",
   "This server hosts one delegation lane: ephemeral subagent runs whose output streams into your own thread.",
-  "Use spawn_agent for delegation: it waits by default. Set background=true only when the parent has useful work to do before the result; this returns a run_id and never injects a new message into the parent thread. At the next synchronization point, call wait_for_agent for every background result the task requires. Each wait is bounded only to stay below the MCP client's transport timeout: status=running means the server kept the child active, and the elapsed wait does not by itself mean the run stalled. When its result is required, keep waiting across as many wait_for_agent calls as necessary. Never cancel or abandon a run solely because 180 seconds or any other wait duration elapsed, it has not produced a final answer yet, or it is still investigating. Cancel only when the user explicitly asks or the task is no longer needed for a reason unrelated to elapsed time.",
+  "Use delegate_agent for delegation: it waits by default. Set background=true only when the parent has useful work to do before the result; this returns a run_id and never injects a new message into the parent thread. At the next synchronization point, call wait_for_agent for every background result the task requires. Each wait is bounded only to stay below the MCP client's transport timeout: status=running means the server kept the child active, and the elapsed wait does not by itself mean the run stalled. When its result is required, keep waiting across as many wait_for_agent calls as necessary. Never cancel or abandon a run solely because 180 seconds or any other wait duration elapsed, it has not produced a final answer yet, or it is still investigating. Cancel only when the user explicitly asks or the task is no longer needed for a reason unrelated to elapsed time.",
   "wait_for_agent and get_status support incremental output: pass the previous result's total_output_chars as after_output_chars on the next call, so repeated waits return only newer text and identical retries remain safe. Output is clipped to a short tail while the run is still working; clipped text requires full_output=true if genuinely needed.",
-  `Pass tasks=[...] to the same spawn_agent call to launch up to ${MAX_CONCURRENT_CHILDREN_PER_PARENT} independent agents in parallel. Each parent thread can have at most ${MAX_CONCURRENT_CHILDREN_PER_PARENT} running agents across all calls; wait for an existing run to finish before spawning beyond that limit.`,
+  `Pass tasks=[...] to the same delegate_agent call to launch up to ${MAX_CONCURRENT_CHILDREN_PER_PARENT} independent agents in parallel. Each parent thread can have at most ${MAX_CONCURRENT_CHILDREN_PER_PARENT} running agents across all calls; wait for an existing run to finish before spawning beyond that limit.`,
   "Use ordered fallbacks to retry startup failures on another model or provider. Retrying after a dispatched turn requires retry_on='any-failure' because it may repeat side effects.",
   "Background runs also survive interruption of the current parent turn, but still stop when the parent thread closes.",
   "Give each subagent a self-contained prompt — it does not share your conversation context.",
-  "Use steer_agent to send a follow-up message to a running child: corrections, new evidence, or narrowed scope. The child keeps its session and context and continues with your message. It is a message, not a result: keep waiting for the child to finish. list_runs.can_steer is false only while a child is still starting, has finished, or is processing a previous message.",
+  "Use steer_agent to send a follow-up message to a running child: corrections, new evidence, or narrowed scope. Poracode delivers it immediately when the child can steer and otherwise queues it FIFO until startup or the previous delivery finishes. The child keeps its session and context. It is a message, not a result: keep waiting for the child to finish. list_runs reports can_steer and queued_messages.",
   "For larger batches, call list_runs with include_capacity=true to inspect available_slots (a snapshot, not a reservation). Use wait_for_agent with run_ids and wait_mode='any' to collect the next completed result and refill free slots; omit already-settled runs from the next wait. Scope concurrent edits to distinct files or clearly separated responsibilities. Include the objective, relevant context, constraints, and acceptance checks in each prompt. Ask for findings with file references, verification evidence, and unresolved risks; validate the returned work before integrating it.",
-  "Always set name on spawn_agent and on every tasks=[...] entry: a short, specific label describing what that subagent will do (for example `Review runtime findings`). Users see this label in the thread; do not omit it or repeat provider/model/reasoning values there — Crossagents appends those automatically.",
+  "Always set name on delegate_agent and on every tasks=[...] entry: a short, specific label describing what that subagent will do (for example `Review runtime findings`). Users see this label in the thread; do not omit it or repeat provider/model/reasoning values there — Crossagents appends those automatically.",
   "For long-lived, first-class app threads the user sees in the sidebar (optionally in their own git worktree) — e.g. one ticket or feature per thread — use the always-on `poracode` MCP server's thread tools (create_thread, list_threads, get_thread, read_thread, send_to_thread, wait_for_thread, interrupt_thread, stop_thread) instead.",
 ].join(" ");
 
@@ -104,7 +106,7 @@ const SUBAGENT_SELECTION_PROPERTIES = {
   provider: {
     type: "string",
     description:
-      "Provider id from list_agents (for example `codex`). Omit when the user did not specify one to use the highest-ranked available provider.",
+      "Provider id from list_agents (for example `codex` or the profile-qualified `codex:work`). Omit when the user did not specify one to use the highest-ranked available provider.",
   },
   model: {
     type: "string",
@@ -351,7 +353,7 @@ const RAW_TOOLS: ToolSpec[] = [
   {
     name: "steer_agent",
     description:
-      "Send a follow-up message to a running child owned by this parent, like sending a message to a chat. The child keeps its session and context and continues with your message. Returns once the message is delivered; keep waiting for the child's result.",
+      "Send a follow-up message to a running child owned by this parent. Poracode steers immediately when possible and otherwise queues the message FIFO until the structured child is ready. The child keeps its session and context; keep waiting for its result.",
     inputSchema: {
       type: "object",
       required: ["run_id", "prompt"],
@@ -369,6 +371,24 @@ const RAW_TOOLS: ToolSpec[] = [
     },
   },
 ];
+
+const spawnAgentTool = RAW_TOOLS.find((tool) => tool.name === "spawn_agent");
+if (!spawnAgentTool) throw new Error("Crossagents spawn_agent tool is missing.");
+
+/**
+ * Codex hosts may reserve the bare `spawn_agent` name for their own built-in
+ * helper system and apply its slot-limit hook even to a namespaced MCP call.
+ * Advertise a collision-free equivalent so Poracode Crossagents remains
+ * callable in those sessions; keep spawn_agent for every other client.
+ */
+RAW_TOOLS.splice(RAW_TOOLS.indexOf(spawnAgentTool) + 1, 0, {
+  ...spawnAgentTool,
+  name: "delegate_agent",
+  description: spawnAgentTool.description.replace(
+    "Spawn one task-tagged agent",
+    "Delegate one task-tagged agent through Poracode Crossagents (collision-free alias of spawn_agent)",
+  ),
+});
 
 const READ_ONLY_TOOL_NAMES = new Set([
   "list_agents",
@@ -389,8 +409,14 @@ const BASE_TOOLS: ToolSpec[] = RAW_TOOLS.map((tool) => ({
       : {
           readOnlyHint: false,
           destructiveHint:
-            tool.name === "spawn_agent" || tool.name === "steer_agent" || tool.name === "cancel",
-          openWorldHint: tool.name === "spawn_agent" || tool.name === "steer_agent",
+            tool.name === "spawn_agent" ||
+            tool.name === "delegate_agent" ||
+            tool.name === "steer_agent" ||
+            tool.name === "cancel",
+          openWorldHint:
+            tool.name === "spawn_agent" ||
+            tool.name === "delegate_agent" ||
+            tool.name === "steer_agent",
         },
 }));
 
@@ -897,6 +923,7 @@ export async function dispatchTool(
       case "remove_routing_preference":
         return await removeRoutingPreference(args, ctx);
       case "spawn_agent":
+      case "delegate_agent":
         return await spawnAgent(args, ctx);
       // Hidden compatibility aliases for provider sessions initialized against
       // the earlier, wider tool catalog.
@@ -979,8 +1006,8 @@ export async function dispatchTool(
         const prompt = typeof args.prompt === "string" ? args.prompt : "";
         if (!runId) return errorResult("run_id is required");
         if (!prompt.trim()) return errorResult("prompt must not be empty");
-        await ctx.runManager.steer(runId, prompt, ctx.parentThreadId);
-        return jsonResult({ run_id: runId, status: "accepted" });
+        const delivery = await ctx.runManager.sendMessage(runId, prompt, ctx.parentThreadId);
+        return jsonResult({ run_id: runId, status: "accepted", delivery });
       }
       default:
         return errorResult(`Unknown tool: ${name}`);

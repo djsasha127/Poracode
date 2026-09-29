@@ -792,6 +792,37 @@ describe("SubagentRunManager", () => {
     },
   );
 
+  it("queues a child message during startup and steers it once the child is ready", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const start = vi.spyOn(FakeHandle.prototype, "startTurn").mockImplementationOnce(() => gate);
+    const h = makeHarness();
+    try {
+      const { runId } = h.manager.spawn(PARENT, { agent: "codex", prompt: "go" });
+      await flush();
+      const handle = h.handles[0]!;
+      const steer = vi.fn<NonNullable<StructuredSessionHandle["steerTurn"]>>(async () => {});
+      handle.steerTurn = steer;
+
+      await expect(h.manager.sendMessage(runId, "new evidence", PARENT)).resolves.toBe("queued");
+      expect(h.manager.listRuns(PARENT)[0]?.queued_messages).toBe(1);
+      expect(steer).not.toHaveBeenCalled();
+
+      release();
+      await vi.waitFor(() =>
+        expect(steer).toHaveBeenCalledWith("new evidence", h.inputs[0]!.config),
+      );
+      expect(h.manager.listRuns(PARENT)[0]?.queued_messages).toBe(0);
+    } finally {
+      release();
+      h.manager.cancelAllForThread(PARENT);
+      await flush();
+      start.mockRestore();
+    }
+  });
+
   it("steers a child without native steerTurn by interrupting and restarting the turn", async () => {
     const h = makeHarness();
     const { runId } = h.manager.spawn(PARENT, { agent: "codex", prompt: "go" });

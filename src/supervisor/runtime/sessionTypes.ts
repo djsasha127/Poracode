@@ -47,6 +47,11 @@ export interface PendingSteerSlot extends QueuedStructuredTurn {
   stagedAt: number;
 }
 
+export interface QueuedStructuredTurnSlot extends QueuedStructuredTurn {
+  id: string;
+  queuedAt: number;
+}
+
 export interface SessionRuntime {
   instanceId: string;
   threadId: string;
@@ -89,12 +94,16 @@ export interface SessionRuntime {
   pendingTerminalPrompt?: string | undefined;
   pendingTerminalSegments?: PromptSegment[] | undefined;
   /**
-   * Single staged steer message. Set when the user submits while the thread
-   * is `working`; cleared when the in-flight turn resolves with `cancelled`
+   * Single staged steer message. Set when the user explicitly selects Steer
+   * while the thread is `working`; cleared when the in-flight turn resolves with `cancelled`
    * stopReason and the slot is drained as the next prompt, or when the user
    * explicitly aborts via `clearPendingSteer`. Replace-latest on edit.
    */
   pendingSteer?: PendingSteerSlot | undefined;
+  /** FIFO normal follow-ups submitted while a GUI turn is working. */
+  queuedStructuredTurns?: QueuedStructuredTurnSlot[] | undefined;
+  /** Guards the idle -> working handoff while a dequeued provider call starts. */
+  queuedStructuredTurnStarting?: boolean | undefined;
   structuredTurnInterruptRequested?: boolean | undefined;
   /**
    * Force-stop watchdog for a structured (GUI) turn. Armed when the user

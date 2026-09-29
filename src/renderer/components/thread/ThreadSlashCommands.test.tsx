@@ -397,7 +397,7 @@ describe("ThreadSlashCommands", () => {
     expect(screen.getByText("/plan")).toBeInTheDocument();
     expect(screen.getByText("/agent")).toBeInTheDocument();
     expect(screen.getByText("/goal")).toBeInTheDocument();
-    expect(screen.queryByText("/status")).not.toBeInTheDocument();
+    expect(screen.getByText("/status")).toBeInTheDocument();
   });
 
   it("shows Poracode Codex server commands instead of CLI commands in GUI draft composer", async () => {
@@ -432,7 +432,7 @@ describe("ThreadSlashCommands", () => {
     expect(screen.getByText("/plan")).toBeInTheDocument();
     expect(screen.getByText("/agent")).toBeInTheDocument();
     expect(screen.getByText("/goal")).toBeInTheDocument();
-    expect(screen.queryByText("/status")).not.toBeInTheDocument();
+    expect(screen.getByText("/status")).toBeInTheDocument();
   });
 
   it("shows effective skills in a separate group and submits structured metadata", async () => {

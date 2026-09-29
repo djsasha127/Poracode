@@ -2,9 +2,11 @@ import {
   baseAgentKind,
   type ProfileBreakdownEntry,
   type ProfileStatsRequest,
+  type ProfileTokenBreakdown,
   type ProfileTokenProvider,
   type ProfileTokenStats,
 } from "@/shared/contracts";
+import { priceTokens, PRICING_TABLE_REVIEWED, rateForModel } from "@poracode/agents-usage";
 import { dbGetAllUsageEvents, getProfileDataGeneration } from "../db";
 import {
   buildHeatmap,
@@ -32,6 +34,34 @@ function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+function emptyBreakdown(): ProfileTokenBreakdown {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+}
+
+const TOKEN_CATEGORY_BY_KIND = {
+  tokens_v2_input: "input",
+  tokens_v2_output: "output",
+  tokens_v2_cache_read: "cacheRead",
+  tokens_v2_cache_write: "cacheWrite",
+} as const;
+
+type TokenCategory = (typeof TOKEN_CATEGORY_BY_KIND)[keyof typeof TOKEN_CATEGORY_BY_KIND];
+
+function tokenCategory(kind: string): TokenCategory | undefined {
+  return TOKEN_CATEGORY_BY_KIND[kind as keyof typeof TOKEN_CATEGORY_BY_KIND];
+}
+
+function addCategory(
+  map: Map<string, ProfileTokenBreakdown>,
+  key: string,
+  category: TokenCategory,
+  value: number,
+): void {
+  const current = map.get(key) ?? emptyBreakdown();
+  current[category] += value;
+  map.set(key, current);
+}
+
 function emptyTokenStats(
   device: ProfileTokenStats["device"],
   req: ProfileStatsRequest,
@@ -48,6 +78,11 @@ function emptyTokenStats(
     timezoneOffsetMinutes: req.utcOffsetMinutes,
     windowDays,
     lifetimeTokens: 0,
+    breakdown: emptyBreakdown(),
+    costBreakdownUsd: emptyBreakdown(),
+    pricedTokens: 0,
+    unpricedTokens: 0,
+    pricingReviewedAt: PRICING_TABLE_REVIEWED,
     peakDayTokens: 0,
     providers: [],
     accounts: [],
@@ -84,6 +119,18 @@ export function computeProfileTokenStats(req: ProfileStatsRequest): ProfileToken
   const perProvider = new Map<string, number>();
   const perAccount = new Map<string, number>();
   const perModel = new Map<string, number>();
+  const billable = emptyBreakdown();
+  const billableByProvider = new Map<string, ProfileTokenBreakdown>();
+  const billableByAccount = new Map<string, ProfileTokenBreakdown>();
+  const costBreakdownUsd = emptyBreakdown();
+  const costBreakdownByProvider = new Map<string, ProfileTokenBreakdown>();
+  const costBreakdownByAccount = new Map<string, ProfileTokenBreakdown>();
+  const costByProvider = new Map<string, number>();
+  const costByAccount = new Map<string, number>();
+  const pricedTokensByProvider = new Map<string, number>();
+  const pricedTokensByAccount = new Map<string, number>();
+  let estimatedCostUsd = 0;
+  let pricedTokens = 0;
   // Coverage sets for the honesty list: providers that ran threads or turns vs
   // providers with at least one exact (tokens_v2) token row. A zero-value
   // tokens_v2 row still proves the provider reports exact usage. Computed over
@@ -109,13 +156,43 @@ export function computeProfileTokenStats(req: ProfileStatsRequest): ProfileToken
         if (prev === undefined || row.ts < prev) activityFirstTs.set(base, row.ts);
       }
     }
-    if ((row.kind !== "tokens" && row.kind !== "tokens_v2") || row.value <= 0) continue;
     // Scope to the selected account (exact account-kind match) when filtering.
     if (req.provider && row.provider !== req.provider) continue;
     const dayIndex = localDayIndex(row.ts, offset);
     if (startDayIndex !== undefined && (dayIndex < startDayIndex || dayIndex > todayIndex)) {
       continue;
     }
+    const category = tokenCategory(row.kind);
+    if (category && row.value > 0) {
+      billable[category] += row.value;
+      if (row.provider) {
+        const base = baseAgentKind(row.provider);
+        addCategory(billableByProvider, base, category, row.value);
+        addCategory(billableByAccount, row.provider, category, row.value);
+      }
+      if (rateForModel(row.model ?? undefined)) {
+        const categoryTokens = emptyBreakdown();
+        categoryTokens[category] = row.value;
+        const cost = priceTokens(row.model ?? undefined, categoryTokens);
+        estimatedCostUsd += cost;
+        costBreakdownUsd[category] += cost;
+        pricedTokens += row.value;
+        if (row.provider) {
+          const base = baseAgentKind(row.provider);
+          addCategory(costBreakdownByProvider, base, category, cost);
+          addCategory(costBreakdownByAccount, row.provider, category, cost);
+          costByProvider.set(base, (costByProvider.get(base) ?? 0) + cost);
+          costByAccount.set(row.provider, (costByAccount.get(row.provider) ?? 0) + cost);
+          pricedTokensByProvider.set(base, (pricedTokensByProvider.get(base) ?? 0) + row.value);
+          pricedTokensByAccount.set(
+            row.provider,
+            (pricedTokensByAccount.get(row.provider) ?? 0) + row.value,
+          );
+        }
+      }
+      continue;
+    }
+    if ((row.kind !== "tokens" && row.kind !== "tokens_v2") || row.value <= 0) continue;
     lifetimeTokens += row.value;
     const day = dayKeyFromIndex(dayIndex);
     perDay.set(day, (perDay.get(day) ?? 0) + row.value);
@@ -143,22 +220,46 @@ export function computeProfileTokenStats(req: ProfileStatsRequest): ProfileToken
 
   const providers: ProfileTokenProvider[] = [...perProvider.entries()]
     .filter(([, tokens]) => tokens > 0)
-    .map(([provider, tokens]) => ({
-      provider,
-      label: providerLabel(provider),
-      tokens,
-      percent: lifetimeTokens > 0 ? round1((tokens / lifetimeTokens) * 100) : 0,
-    }))
+    .map(([provider, tokens]) => {
+      const providerPricedTokens = pricedTokensByProvider.get(provider) ?? 0;
+      return {
+        provider,
+        label: providerLabel(provider),
+        tokens,
+        percent: lifetimeTokens > 0 ? round1((tokens / lifetimeTokens) * 100) : 0,
+        ...(billableByProvider.has(provider)
+          ? { breakdown: billableByProvider.get(provider)! }
+          : {}),
+        ...(providerPricedTokens > 0
+          ? {
+              pricedTokens: providerPricedTokens,
+              estimatedCostUsd: costByProvider.get(provider) ?? 0,
+              costBreakdownUsd: costBreakdownByProvider.get(provider) ?? emptyBreakdown(),
+            }
+          : {}),
+      };
+    })
     .sort((a, b) => b.tokens - a.tokens);
 
   const accounts: ProfileTokenProvider[] = [...perAccount.entries()]
     .filter(([, tokens]) => tokens > 0)
-    .map(([account, tokens]) => ({
-      provider: account,
-      label: accountLabel(account),
-      tokens,
-      percent: lifetimeTokens > 0 ? round1((tokens / lifetimeTokens) * 100) : 0,
-    }))
+    .map(([account, tokens]) => {
+      const accountPricedTokens = pricedTokensByAccount.get(account) ?? 0;
+      return {
+        provider: account,
+        label: accountLabel(account),
+        tokens,
+        percent: lifetimeTokens > 0 ? round1((tokens / lifetimeTokens) * 100) : 0,
+        ...(billableByAccount.has(account) ? { breakdown: billableByAccount.get(account)! } : {}),
+        ...(accountPricedTokens > 0
+          ? {
+              pricedTokens: accountPricedTokens,
+              estimatedCostUsd: costByAccount.get(account) ?? 0,
+              costBreakdownUsd: costBreakdownByAccount.get(account) ?? emptyBreakdown(),
+            }
+          : {}),
+      };
+    })
     .sort((a, b) => b.tokens - a.tokens);
 
   const models: ProfileBreakdownEntry[] = [...perModel.entries()]
@@ -189,6 +290,12 @@ export function computeProfileTokenStats(req: ProfileStatsRequest): ProfileToken
     timezoneOffsetMinutes: offset,
     windowDays: windowDays ?? HEATMAP_WINDOW_DAYS,
     lifetimeTokens,
+    breakdown: billable,
+    ...(pricedTokens > 0 ? { estimatedCostUsd } : {}),
+    costBreakdownUsd,
+    pricedTokens,
+    unpricedTokens: Math.max(0, lifetimeTokens - pricedTokens),
+    pricingReviewedAt: PRICING_TABLE_REVIEWED,
     peakDayTokens,
     ...(peakDay ? { peakDay } : {}),
     providers,

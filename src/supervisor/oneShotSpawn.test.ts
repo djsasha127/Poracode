@@ -156,6 +156,39 @@ describe("spawnAgentPty", () => {
       vi.useRealTimers();
     }
   });
+
+  it("force-kills and settles when a timed-out PTY never emits exit", async () => {
+    vi.useFakeTimers();
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const kill = vi.fn<(signal?: string) => void>();
+    spawnPtyMock.mockReturnValue({
+      pid: 4321,
+      kill,
+      write: vi.fn<() => void>(),
+      onData: vi.fn<() => { dispose: () => void }>(() => ({
+        dispose: vi.fn<() => void>(),
+      })),
+      onExit: vi.fn<() => { dispose: () => void }>(() => ({
+        dispose: vi.fn<() => void>(),
+      })),
+    });
+
+    try {
+      const result = spawnAgentPty({ command: "agy", args: ["models"] }, "", 10);
+      const settled = result.then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(1_010);
+
+      expect(kill).toHaveBeenNthCalledWith(1);
+      expect(kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+      await expect(settled).resolves.toMatchObject({ message: "Agent timed out" });
+    } finally {
+      platform.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("one-shot banner fencing", () => {

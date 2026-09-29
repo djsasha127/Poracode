@@ -216,6 +216,16 @@ export interface ProfileCoreStats {
 
 // -- Token stats (durable local usage log) ----------------------------
 
+export interface ProfileTokenBreakdown {
+  /** Uncached input tokens. */
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export type ProfileTokenCostBreakdown = ProfileTokenBreakdown;
+
 export interface ProfileTokenProvider {
   provider: string;
   label: string;
@@ -224,6 +234,12 @@ export interface ProfileTokenProvider {
   percent: number;
   /** Estimated USD at public list rates (subscription users are NOT billed this). */
   estimatedCostUsd?: number;
+  /** USD contribution of each billable category. */
+  costBreakdownUsd?: ProfileTokenCostBreakdown;
+  /** Billable categories recorded by providers that expose detailed usage. */
+  breakdown?: ProfileTokenBreakdown;
+  /** Tokens covered by a known model price in `estimatedCostUsd`. */
+  pricedTokens?: number;
 }
 
 export interface ProfileTokenStats {
@@ -236,6 +252,18 @@ export interface ProfileTokenStats {
   windowDays: number;
   /** Total retained tokens (bounded by the local usage-event retention window). */
   lifetimeTokens: number;
+  /** Detailed billable buckets. May cover only usage recorded after this feature was enabled. */
+  breakdown: ProfileTokenBreakdown;
+  /** API-equivalent value at public list rates; not an actual subscription charge. */
+  estimatedCostUsd?: number;
+  /** USD contribution of each billable category. */
+  costBreakdownUsd: ProfileTokenCostBreakdown;
+  /** Detailed tokens whose model has a known public rate. */
+  pricedTokens: number;
+  /** Recorded total tokens not covered by `estimatedCostUsd`. */
+  unpricedTokens: number;
+  /** Date of the bundled public-rate table used for this estimate. */
+  pricingReviewedAt: string;
   peakDayTokens: number;
   peakDay?: string;
   /** Per-provider token totals, folded to the base provider (global). */

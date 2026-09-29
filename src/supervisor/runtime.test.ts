@@ -399,7 +399,7 @@ describe("SupervisorRuntime thread input", () => {
     expect(session.structuredSession.startTurn).not.toHaveBeenCalled();
   });
 
-  it("stages GUI submit-while-working as a single pending steer with replace-latest, interrupts once, and drains the latest on idle", async () => {
+  it("queues GUI submit-while-working in FIFO order without interrupting the active turn", async () => {
     const runtime = makeRuntime(() => undefined);
     const startTurn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
     const interruptTurn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
@@ -496,9 +496,9 @@ describe("SupervisorRuntime thread input", () => {
       userMessageItemId: "user-second",
     });
 
-    // Replace-latest: both submits stage into the same slot. interruptTurn
-    // fires once; startTurn waits for cancel-ack via the idle transition.
-    expect(interruptTurn).toHaveBeenCalledTimes(1);
+    // Ordinary submit is a non-destructive FIFO queue. Only the explicit
+    // steer action interrupts the active turn.
+    expect(interruptTurn).not.toHaveBeenCalled();
     expect(startTurn).not.toHaveBeenCalled();
 
     const listener = (
@@ -517,16 +517,25 @@ describe("SupervisorRuntime thread input", () => {
     listener.onUpdate({ status: "idle", attention: "none" });
     await Promise.resolve();
 
-    // Only the latest submit drains; the earlier one was replaced.
+    // The oldest queued submit drains first.
     expect(startTurn).toHaveBeenCalledTimes(1);
     expect(startTurn).toHaveBeenCalledWith(
-      "second",
+      "first",
       {
         model: "gpt-5.4",
       },
       undefined,
-      { userMessageItemId: "user-second" },
+      { userMessageItemId: "user-first" },
     );
+
+    listener.onUpdate({ status: "working", attention: "working" });
+    listener.onUpdate({ status: "idle", attention: "none" });
+    await Promise.resolve();
+
+    expect(startTurn).toHaveBeenCalledTimes(2);
+    expect(startTurn).toHaveBeenLastCalledWith("second", { model: "gpt-5.4" }, undefined, {
+      userMessageItemId: "user-second",
+    });
   });
 
   it("flushes buffered runtime events before emitting a structured turn-end idle", () => {
@@ -636,7 +645,7 @@ describe("SupervisorRuntime thread input", () => {
     expect(runtimeIdx).toBeLessThan(idleIdx);
   });
 
-  it("drains a pending steer when the working turn fails with error status", async () => {
+  it("drains a queued follow-up when the working turn fails with error status", async () => {
     const runtime = makeRuntime(() => undefined);
     const startTurn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
     const interruptTurn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
@@ -695,7 +704,7 @@ describe("SupervisorRuntime thread input", () => {
       userMessageItemId: "user-redirect",
     });
 
-    expect(interruptTurn).toHaveBeenCalledTimes(1);
+    expect(interruptTurn).not.toHaveBeenCalled();
     expect(startTurn).not.toHaveBeenCalled();
 
     const listener = (
@@ -708,8 +717,8 @@ describe("SupervisorRuntime thread input", () => {
       onUpdate: (update: { status: string; attention: string; errorMessage?: string }) => void;
     };
 
-    // The turn fails instead of reaching idle. The steer must still drain —
-    // otherwise the strip sticks on "waiting for agent to stop" forever.
+    // The turn fails instead of reaching idle. The queued follow-up must still
+    // drain so it does not remain stuck after a provider error.
     listener.onUpdate({ status: "error", attention: "error", errorMessage: "Claude turn failed." });
     await Promise.resolve();
 

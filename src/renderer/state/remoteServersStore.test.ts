@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GitStatusResult, Project, Thread } from "@/shared/contracts";
+import type { GitStatusResult, Project, Thread, UsageSnapshot } from "@/shared/contracts";
 import type { IpcProcedureName, IpcProcedurePayload, IpcProcedureResult } from "@/shared/ipc";
 import type { GitStatePatch, GitStateSnapshot } from "@/shared/gitState";
 import { HOME_PROJECT_ID } from "@/shared/homeScope";
@@ -189,6 +189,9 @@ function makeClient(opts?: {
   snapshotThrows?: boolean;
   snapshot?: RemoteDesktopClient["snapshot"];
   agentStatuses?: RemoteDesktopClient["agentStatuses"];
+  providerUsage?: RemoteDesktopClient["providerUsage"];
+  setProviderUsageApiKey?: RemoteDesktopClient["setProviderUsageApiKey"];
+  profileTokenStats?: RemoteDesktopClient["profileTokenStats"];
   environment?: RemoteDesktopClient["environment"];
   environmentHttpBaseUrl?: string;
   hostMode?: "desktop" | "helper";
@@ -242,6 +245,30 @@ function makeClient(opts?: {
       })),
     agentStatuses:
       opts?.agentStatuses ?? (async () => ({ windows: [], wsl: [], updatedAt: "now" })),
+    providerUsage: opts?.providerUsage ?? (async () => ({ snapshots: [], fromCache: false })),
+    setProviderUsageApiKey: opts?.setProviderUsageApiKey ?? (async () => ({ ok: true })),
+    profileTokenStats:
+      opts?.profileTokenStats ??
+      (async () => ({
+        available: false,
+        scope: "device" as const,
+        device: { id: "d1", label: "Server One", platform: "darwin" },
+        generatedAt: 0,
+        timezoneOffsetMinutes: 0,
+        windowDays: 365,
+        lifetimeTokens: 0,
+        breakdown: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        costBreakdownUsd: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        pricedTokens: 0,
+        unpricedTokens: 0,
+        pricingReviewedAt: "2026-09-29",
+        peakDayTokens: 0,
+        providers: [],
+        accounts: [],
+        models: [],
+        tokenHeatmap: { metric: "tokens" as const, windowDays: 365, cells: [], max: 0 },
+        unavailableProviders: [],
+      })),
     snapshot:
       opts?.snapshot ??
       (async () => {
@@ -393,6 +420,136 @@ describe("useRemoteServersStore", () => {
       .pairServer({ endpoint: "192.168.1.9:38987", token: "a" });
 
     expect(checkHostUpdate).not.toHaveBeenCalled();
+  });
+
+  it("keeps provider usage scoped to the paired remote host", async () => {
+    const claudeUsage: UsageSnapshot = {
+      providerId: "claude",
+      status: "ok",
+      windows: [{ id: "session-5h", label: "Session (5h)", usedPercent: 42 }],
+      fetchedAt: 123,
+    };
+    useRemoteServersStore.getState().setClientFactory(
+      factoryFor(
+        makeClient({
+          providerUsage: async () => ({ snapshots: [claudeUsage], fromCache: false }),
+        }),
+      ),
+    );
+
+    await useRemoteServersStore
+      .getState()
+      .pairServer({ endpoint: "192.168.1.9:38987", token: "a" });
+
+    expect(useRemoteServersStore.getState().runtime.d1?.providerUsage).toEqual({
+      snapshots: [claudeUsage],
+      fromCache: false,
+    });
+  });
+
+  it("merges an explicitly requested remote provider without dropping existing usage", async () => {
+    const claudeUsage: UsageSnapshot = {
+      providerId: "claude",
+      status: "ok",
+      windows: [{ id: "weekly", label: "Weekly", usedPercent: 42 }],
+      fetchedAt: 123,
+    };
+    const museUsage: UsageSnapshot = {
+      providerId: "muse",
+      status: "ok",
+      windows: [],
+      fetchedAt: 456,
+      plan: "Muse Code",
+    };
+    const providerUsage = vi.fn<RemoteDesktopClient["providerUsage"]>(async (providerIds) => ({
+      snapshots: providerIds?.includes("muse") ? [museUsage] : [claudeUsage],
+      fromCache: false,
+    }));
+    useRemoteServersStore.getState().setClientFactory(factoryFor(makeClient({ providerUsage })));
+
+    await useRemoteServersStore
+      .getState()
+      .pairServer({ endpoint: "192.168.1.9:38987", token: "a" });
+    await useRemoteServersStore.getState().refreshProviderUsage("d1", ["muse"]);
+
+    expect(providerUsage).toHaveBeenLastCalledWith(["muse"]);
+    expect(useRemoteServersStore.getState().runtime.d1?.providerUsage?.snapshots).toEqual([
+      claudeUsage,
+      museUsage,
+    ]);
+  });
+
+  it("submits an API key to the selected remote host and refreshes that provider", async () => {
+    const setProviderUsageApiKey = vi.fn<RemoteDesktopClient["setProviderUsageApiKey"]>(
+      async () => ({
+        ok: true,
+      }),
+    );
+    const providerUsage = vi.fn<RemoteDesktopClient["providerUsage"]>(async () => ({
+      snapshots: [],
+      fromCache: false,
+    }));
+    useRemoteServersStore
+      .getState()
+      .setClientFactory(factoryFor(makeClient({ setProviderUsageApiKey, providerUsage })));
+    await useRemoteServersStore
+      .getState()
+      .pairServer({ endpoint: "192.168.1.9:38987", token: "a" });
+
+    await useRemoteServersStore.getState().setProviderUsageApiKey("d1", "kimi", "kimi-test-key");
+
+    expect(setProviderUsageApiKey).toHaveBeenCalledWith({
+      providerId: "kimi",
+      apiKey: "kimi-test-key",
+    });
+    expect(providerUsage).toHaveBeenLastCalledWith(["kimi"]);
+  });
+
+  it("does not fail pairing when remote usage is unavailable", async () => {
+    useRemoteServersStore.getState().setClientFactory(
+      factoryFor(
+        makeClient({
+          providerUsage: async () => {
+            throw new Error("usage unavailable");
+          },
+        }),
+      ),
+    );
+
+    await expect(
+      useRemoteServersStore.getState().pairServer({ endpoint: "192.168.1.9:38987", token: "a" }),
+    ).resolves.toMatchObject({ desktopId: "d1" });
+    expect(useRemoteServersStore.getState().runtime.d1).toMatchObject({ status: "online" });
+  });
+
+  it("keeps token and dollar totals scoped to the paired remote host", async () => {
+    const stats = await makeClient().profileTokenStats({
+      utcOffsetMinutes: 0,
+      scope: "device",
+      window: "all",
+    });
+    const incoming = {
+      ...stats,
+      available: true,
+      lifetimeTokens: 150,
+      pricedTokens: 150,
+      unpricedTokens: 0,
+      estimatedCostUsd: 0.0042,
+    };
+    useRemoteServersStore.getState().setClientFactory(
+      factoryFor(
+        makeClient({
+          profileTokenStats: async () => incoming,
+        }),
+      ),
+    );
+
+    await useRemoteServersStore
+      .getState()
+      .pairServer({ endpoint: "192.168.1.9:38987", token: "a" });
+    await useRemoteServersStore.getState().refreshProfileTokenStats("d1");
+
+    expect(useRemoteServersStore.getState().runtime.d1?.profileTokenStats).toEqual(incoming);
   });
 
   it("waits for the installed host version before restoring the connection", async () => {
@@ -2122,6 +2279,22 @@ describe("useRemoteServersStore", () => {
     expect(useRemoteServersStore.getState().openThread).toBeNull();
   });
 
+  it("hydrates a remote thread for drag-and-drop without replacing the current pane", async () => {
+    useRemoteServersStore.getState().setClientFactory(factoryFor(makeClient()));
+    await useRemoteServersStore
+      .getState()
+      .pairServer({ endpoint: "192.168.1.9:38987", token: "a" });
+    useAppStore.setState({ view: { kind: "thread", panes: ["keep-this-pane"] } });
+
+    await useRemoteServersStore.getState().openRemoteThread("d1", "rt-1", { activate: false });
+
+    expect(sync.applyThreadSnapshot).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().view).toEqual({
+      kind: "thread",
+      panes: ["keep-this-pane"],
+    });
+  });
+
   it("streams a remote terminal through the open-thread connection", async () => {
     const send = vi.fn<(data: string) => void>();
     const socket: RemoteSocketLike = {
@@ -3144,6 +3317,32 @@ describe("useRemoteServersStore", () => {
     // The desktop-global agent-status event is filtered out entirely.
     expect(sync.dispatchRemoteSupervisorEvent).not.toHaveBeenCalled();
     expect(useAgentStatusesStore.getState().agentStatuses).toBe(before);
+  });
+
+  it("applies live provider usage only to the owning remote host", async () => {
+    const socket: RemoteSocketLike = { close: vi.fn<() => void>(), onmessage: null, onclose: null };
+    useRemoteServersStore.getState().setClientFactory(factoryFor(makeClient()));
+    await pairIsolated(() => socket);
+    await useRemoteServersStore.getState().openRemoteThread("d1", "rt-1");
+
+    const snapshot: UsageSnapshot = {
+      providerId: "muse",
+      status: "ok",
+      windows: [{ id: "weekly", label: "Weekly", usedPercent: 17 }],
+      fetchedAt: 456,
+    };
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: "event",
+        seq: 2,
+        event: { type: "provider-usage", snapshot },
+      }),
+    });
+
+    expect(useRemoteServersStore.getState().runtime.d1?.providerUsage).toEqual({
+      snapshots: [snapshot],
+      fromCache: false,
+    });
   });
 
   it("does not hydrate an unrelated thread's runtime batch but applies the open thread's", async () => {

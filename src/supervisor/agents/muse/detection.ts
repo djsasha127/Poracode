@@ -74,7 +74,7 @@ export const museDefaultCapabilities: AgentCapability = {
   presentationModes: ["terminal", "gui"],
   defaultApprovalPolicy: "yolo",
   bypassPermissions: { approvalPolicy: "yolo" },
-  mcpScope: { terminal: "none", gui: "none" },
+  mcpScope: { terminal: "none", gui: "launch" },
   settingDefs: [],
   ...contextCaps,
 };
@@ -247,21 +247,38 @@ export function buildMuseProbedCapabilities(
 }
 
 /**
- * True when `auth.json` has a non-empty `providers` object. Key *names* only —
- * never inspect credential values. Split out so unit tests can cover the rule
- * without touching a real `~/.config/muse`.
+ * True when `auth.json` has at least one provider available to this process.
+ * Key names and storage metadata only — never inspect credential values. An
+ * SSH-launched macOS process cannot read an interactive Keychain item, so an
+ * explicitly keychain-backed provider is unavailable there even though Muse
+ * left a non-empty provider entry behind.
  */
-export function museAuthJsonIsAuthenticated(raw: string | undefined): boolean {
+export function museAuthJsonIsAuthenticated(
+  raw: string | undefined,
+  options: { keychainAvailable?: boolean } = {},
+): boolean {
   if (!raw) return false;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
     const providers = (parsed as { providers?: unknown }).providers;
     if (!providers || typeof providers !== "object" || Array.isArray(providers)) return false;
-    return Object.keys(providers as Record<string, unknown>).length > 0;
+    const entries = Object.values(providers as Record<string, unknown>);
+    if (options.keychainAvailable !== false) return entries.length > 0;
+    return entries.some(
+      (provider) =>
+        !provider ||
+        typeof provider !== "object" ||
+        Array.isArray(provider) ||
+        (provider as { storage?: unknown }).storage !== "keychain",
+    );
   } catch {
     return false;
   }
+}
+
+function museKeychainIsAvailable(): boolean {
+  return !process.env["SSH_CONNECTION"] && !process.env["SSH_TTY"];
 }
 
 /** Native (non-WSL) credential check against the resolved auth.json path. */
@@ -270,7 +287,9 @@ export function museHasStoredCredentials(location: ProjectLocation): boolean {
   const authFile = nativeMuseAuthPath();
   if (!existsSync(authFile)) return false;
   try {
-    return museAuthJsonIsAuthenticated(readFileSync(authFile, "utf8"));
+    return museAuthJsonIsAuthenticated(readFileSync(authFile, "utf8"), {
+      keychainAvailable: museKeychainIsAvailable(),
+    });
   } catch {
     return false;
   }
@@ -287,7 +306,11 @@ const storedCredentialsAuthProbe: AuthProbe = async (ctx) => {
   }
   try {
     const raw = await readFile(nativeMuseAuthPath(), "utf8");
-    return museAuthJsonIsAuthenticated(raw) ? "authenticated" : "missing";
+    return museAuthJsonIsAuthenticated(raw, {
+      keychainAvailable: museKeychainIsAvailable(),
+    })
+      ? "authenticated"
+      : "missing";
   } catch {
     return "missing";
   }

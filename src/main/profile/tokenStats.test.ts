@@ -72,6 +72,90 @@ describe("computeProfileTokenStats (real sqlite)", () => {
     expect(stats.providers.find((p) => p.provider === "codex")?.tokens).toBe(50);
   });
 
+  it("prices detailed categories by model without adding them to the total twice", () => {
+    const now = Date.now();
+    dbAppendUsageEvents([
+      {
+        ts: now,
+        kind: "tokens_v2",
+        provider: "claude:work",
+        model: "claude-sonnet-4",
+        value: 1_250_000,
+      },
+      {
+        ts: now,
+        kind: "tokens_v2_input",
+        provider: "claude:work",
+        model: "claude-sonnet-4",
+        value: 1_000_000,
+      },
+      {
+        ts: now,
+        kind: "tokens_v2_output",
+        provider: "claude:work",
+        model: "claude-sonnet-4",
+        value: 100_000,
+      },
+      {
+        ts: now,
+        kind: "tokens_v2_cache_read",
+        provider: "claude:work",
+        model: "claude-sonnet-4",
+        value: 100_000,
+      },
+      {
+        ts: now,
+        kind: "tokens_v2_cache_write",
+        provider: "claude:work",
+        model: "claude-sonnet-4",
+        value: 50_000,
+      },
+    ]);
+
+    const stats = computeProfileTokenStats({ utcOffsetMinutes: 0 });
+    expect(stats.lifetimeTokens).toBe(1_250_000);
+    expect(stats.breakdown).toEqual({
+      input: 1_000_000,
+      output: 100_000,
+      cacheRead: 100_000,
+      cacheWrite: 50_000,
+    });
+    expect(stats.pricedTokens).toBe(1_250_000);
+    expect(stats.unpricedTokens).toBe(0);
+    expect(stats.estimatedCostUsd).toBeCloseTo(4.7175, 6);
+    expect(stats.accounts[0]).toMatchObject({
+      provider: "claude:work",
+      pricedTokens: 1_250_000,
+      estimatedCostUsd: 4.7175,
+    });
+  });
+
+  it("keeps unknown-model tokens visible while excluding them from the dollar estimate", () => {
+    const now = Date.now();
+    dbAppendUsageEvents([
+      {
+        ts: now,
+        kind: "tokens_v2",
+        provider: "codex",
+        model: "gpt-unknown",
+        value: 100,
+      },
+      {
+        ts: now,
+        kind: "tokens_v2_input",
+        provider: "codex",
+        model: "gpt-unknown",
+        value: 100,
+      },
+    ]);
+
+    const stats = computeProfileTokenStats({ utcOffsetMinutes: 0 });
+    expect(stats.lifetimeTokens).toBe(100);
+    expect(stats.pricedTokens).toBe(0);
+    expect(stats.unpricedTokens).toBe(100);
+    expect(stats.estimatedCostUsd).toBeUndefined();
+  });
+
   it("lists base providers with activity but no tokens_v2 rows as unavailable", () => {
     const now = Date.now();
     dbAppendUsageEvents([

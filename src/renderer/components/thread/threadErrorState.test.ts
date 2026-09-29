@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { RuntimeChatItem } from "@/renderer/state/slices/runtimeEventSlice";
 import type { AppStoreState } from "@/renderer/state/slices/shared";
 import {
+  getLatestUserMessageContent,
   getThreadErrorDockStateForItem,
   isAuthErrorMessage,
   selectThreadErrorDockStates,
@@ -77,6 +78,48 @@ describe("threadErrorState", () => {
       { sourceItemId: "err-a", message: "Usage limit reached." },
       { sourceItemId: "err-b", message: "Internal error" },
     ]);
+  });
+
+  it("copies the latest top-level user prompt for an explicit retry", () => {
+    const state = {
+      runtimeItemIdsByThread: { "t-1": ["user-1", "child", "user-2", "error"] },
+      runtimeItemsByIdByThread: {
+        "t-1": {
+          "user-1": {
+            id: "user-1",
+            type: "user_message",
+            state: "completed",
+            payload: { content: [{ kind: "text", text: "old" }] },
+            streams: {},
+          },
+          child: {
+            id: "child",
+            type: "user_message",
+            state: "completed",
+            parentItemId: "tool-1",
+            payload: { content: [{ kind: "text", text: "child" }] },
+            streams: {},
+          },
+          "user-2": {
+            id: "user-2",
+            type: "user_message",
+            state: "completed",
+            payload: { content: [{ kind: "text", text: "retry this" }] },
+            streams: {},
+          },
+          error: errorItem("error", "Internal server error"),
+        },
+      },
+    } as unknown as AppStoreState;
+
+    const content = getLatestUserMessageContent(state, "t-1");
+    expect(content).toEqual([{ kind: "text", text: "retry this" }]);
+    const source = (
+      state.runtimeItemsByIdByThread["t-1"]!["user-2"]!.payload as {
+        content: unknown[];
+      }
+    ).content;
+    expect(content).not.toBe(source);
   });
 });
 

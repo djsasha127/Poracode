@@ -70,12 +70,16 @@ export const dbProcedures = {
     dbDeleteProjectPayloadSchema.parse({ projectId }),
   ),
   dbSyncAll: defineIpcProcedure<
-    [Project[], Thread[], string],
+    [Project[], Thread[], string, Project[]?, Thread[]?],
     z.infer<typeof dbSyncAllPayloadSchema>,
     void,
     "main-local"
-  >("dbSyncAll", "main-local", dbSyncAllPayloadSchema, (projects, threads, viewJson) =>
-    dbSyncAllPayloadSchema.parse({ projects, threads, viewJson }),
+  >(
+    "dbSyncAll",
+    "main-local",
+    dbSyncAllPayloadSchema,
+    (projects, threads, viewJson, baseProjects, baseThreads) =>
+      dbSyncAllPayloadSchema.parse({ projects, threads, viewJson, baseProjects, baseThreads }),
   ),
   dbPersistExperimentState: definePayloadProcedure<
     DbPersistExperimentStatePayload,

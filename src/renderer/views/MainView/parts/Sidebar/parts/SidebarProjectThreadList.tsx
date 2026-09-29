@@ -17,11 +17,17 @@ import { buildSidebarProjectRows } from "./sidebarProjectRows";
 import type { ThreadSortMode } from "./sortMode";
 import { SeeMoreThreadsButton, SidebarThreadRow } from "./SidebarThreadRow";
 
-export function SidebarProjectThreadList(props: { project: Project; sortMode: ThreadSortMode }) {
+export function SidebarProjectThreadList(props: {
+  project: Project;
+  sortMode: ThreadSortMode;
+  excludeStarred?: boolean;
+}) {
   const { project, sortMode } = props;
   const isThreadVisible = useWorkspaceThreadFilter();
   // No-op for real projects; hides Home threads filed under other workspaces.
-  const projectThreads = useProjectThreads(project.id).filter(isThreadVisible);
+  const projectThreads = useProjectThreads(project.id).filter(
+    (thread) => isThreadVisible(thread) && (!props.excludeStarred || !thread.starred),
+  );
   const experimentCandidateOrder = useExperimentCandidateOrder(project.id);
   const collapsedWorktrees = useSidebarUiStore((s) => s.collapsedWorktrees);
   const editingThreadId = useSidebarUiStore((s) => s.editingThreadId);

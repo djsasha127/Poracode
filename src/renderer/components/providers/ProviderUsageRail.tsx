@@ -13,7 +13,9 @@ import type { UsageSnapshot } from "@poracode/agents-usage/types";
 import { openUsagePanel } from "@/renderer/actions/panelActions";
 import { readBridge } from "@/renderer/bridge";
 import { ContextMenu, type ContextMenuEntry } from "@/renderer/components/common/ContextMenu";
+import { useCurrentRemoteServerId } from "@/renderer/hooks/uiSelectors";
 import { useProviderUsage, useProviderUsageStore } from "@/renderer/state/providerUsageStore";
+import { useRemoteServersStore } from "@/renderer/state/remoteServersStore";
 import { useSharedSettings } from "@/renderer/state/sharedSettingsStore";
 import { ProviderUsageCircle } from "./ProviderUsageCircle";
 import { UsageCostLine } from "./UsageCostLine";
@@ -28,6 +30,7 @@ import {
 import {
   hasRailUsage,
   isClaudeUsageProvider,
+  resolveCombinedUsageSnapshot,
   resolveDisplayedProviders,
   usageRingGroups,
   usesSharedWindowReset,
@@ -89,9 +92,10 @@ function UsageTooltipBody(props: {
   id: string;
   label: string;
   snapshot: UsageSnapshot | undefined;
+  sourceLabel?: string;
   swappable?: boolean;
 }) {
-  const { id, label, snapshot, swappable } = props;
+  const { id, label, snapshot, sourceLabel, swappable } = props;
   const { t } = useLingui();
   // Snapshot once per mount: the reset/pace labels below are relative to this
   // render's clock rather than an impure render-time read. The tooltip content
@@ -148,14 +152,38 @@ function UsageTooltipBody(props: {
           <Trans>Right-click to switch ring</Trans>
         </div>
       ) : null}
+      {sourceLabel ? <div className="text-[10px] text-muted/70">{sourceLabel}</div> : null}
     </div>
   );
 }
 
-function ProviderUsageRailItem(props: { id: string; label: string; index: number; group: string }) {
-  const { id, label, index, group } = props;
+function ProviderUsageRailItem(props: {
+  id: string;
+  label: string;
+  index: number;
+  group: string;
+  remoteServerId?: string;
+  remoteSourceLabel?: string;
+}) {
+  const { id, label, index, group, remoteServerId, remoteSourceLabel } = props;
   const { t } = useLingui();
-  const snapshot = useProviderUsage(id);
+  const localSnapshot = useProviderUsage(id);
+  const remoteSnapshot = useRemoteServersStore((state) =>
+    remoteServerId
+      ? state.runtime[remoteServerId]?.providerUsage?.snapshots.find(
+          (entry) => entry.providerId === id,
+        )
+      : undefined,
+  );
+  const selection = remoteServerId
+    ? resolveCombinedUsageSnapshot(localSnapshot, remoteSnapshot)
+    : { snapshot: localSnapshot, source: "local" as const };
+  const snapshot = selection.snapshot;
+  const sourceLabel = remoteServerId
+    ? selection.source === "remote"
+      ? (remoteSourceLabel ?? remoteServerId)
+      : t`Local`
+    : undefined;
   const selectedRingGroups = useSharedSettings((s) => s.usage.selectedRingGroups);
   const setUsageSetting = useSharedSettings((s) => s.setUsageSetting);
   const { ref, isDragging } = useSortable({
@@ -195,6 +223,7 @@ function ProviderUsageRailItem(props: { id: string; label: string; index: number
             id={id}
             label={label}
             snapshot={snapshot}
+            {...(sourceLabel ? { sourceLabel } : {})}
             swappable={ringGroups.length > 1}
           />
         </Tooltip.Content>
@@ -233,8 +262,11 @@ function UsageRailStrip(props: {
   shownCount: number;
   orientation: "row" | "column";
   onReorder: ReorderHandler;
+  remoteServerId?: string;
+  remoteSourceLabel?: string;
 }) {
-  const { providers, shownCount, orientation, onReorder } = props;
+  const { providers, shownCount, orientation, onReorder, remoteServerId, remoteSourceLabel } =
+    props;
   const shown = providers.slice(0, shownCount);
   // Namespace the sortable group per orientation so the row + column instances
   // (one of which may be mounted but hidden) never share registrations.
@@ -258,9 +290,21 @@ function UsageRailStrip(props: {
     <DragDropProvider sensors={RAIL_SENSORS} onDragEnd={handleDragEnd}>
       <div className={STRIP[orientation].className} style={{ gap: STRIP[orientation].gap }}>
         {shown.map((p, index) => (
-          <ProviderUsageRailItem key={p.id} id={p.id} label={p.label} index={index} group={group} />
+          <ProviderUsageRailItem
+            key={p.id}
+            id={p.id}
+            label={p.label}
+            index={index}
+            group={group}
+            {...(remoteServerId ? { remoteServerId } : {})}
+            {...(remoteSourceLabel ? { remoteSourceLabel } : {})}
+          />
         ))}
-        <UsageOverflowChip providers={providers.slice(shownCount)} />
+        <UsageOverflowChip
+          providers={providers.slice(shownCount)}
+          {...(remoteServerId ? { remoteServerId } : {})}
+          {...(remoteSourceLabel ? { remoteSourceLabel } : {})}
+        />
       </div>
     </DragDropProvider>
   );
@@ -271,8 +315,13 @@ function UsageRailStrip(props: {
  * tooltip carries the rest. The row is measured rather than wrapped so the rail
  * keeps a fixed height as the sidebar is resized.
  */
-function UsageRailRow(props: { providers: readonly UsageProvider[]; onReorder: ReorderHandler }) {
-  const { providers, onReorder } = props;
+function UsageRailRow(props: {
+  providers: readonly UsageProvider[];
+  onReorder: ReorderHandler;
+  remoteServerId?: string;
+  sourceLabel?: string;
+}) {
+  const { providers, onReorder, remoteServerId, sourceLabel } = props;
   const rowRef = useRef<HTMLDivElement | null>(null);
   const [slots, setSlots] = useState(0);
 
@@ -302,6 +351,12 @@ function UsageRailRow(props: { providers: readonly UsageProvider[]; onReorder: R
     <div className="px-2">
       <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted/70">
         <Trans>Usage</Trans>
+        {sourceLabel ? (
+          <span className="normal-case tracking-normal">
+            {" "}
+            · {sourceLabel} + <Trans>Local</Trans>
+          </span>
+        ) : null}
       </p>
       <div ref={rowRef}>
         <UsageRailStrip
@@ -309,6 +364,8 @@ function UsageRailRow(props: { providers: readonly UsageProvider[]; onReorder: R
           shownCount={fitUsageRail(slots, providers.length)}
           orientation="row"
           onReorder={onReorder}
+          {...(remoteServerId ? { remoteServerId } : {})}
+          {...(sourceLabel ? { remoteSourceLabel: sourceLabel } : {})}
         />
       </div>
     </div>
@@ -324,6 +381,12 @@ function UsageRailRow(props: { providers: readonly UsageProvider[]; onReorder: R
  */
 export function ProviderUsageRail(props: { orientation?: "row" | "column" }) {
   const orientation = props.orientation ?? "row";
+  const remoteServerId = useCurrentRemoteServerId();
+  const remoteSourceLabel = useRemoteServersStore((state) =>
+    remoteServerId
+      ? state.servers.find((server) => server.desktopId === remoteServerId)?.label
+      : undefined,
+  );
   const showInSidebar = useSharedSettings((s) => s.usage.showInSidebar);
   const disabledProviders = useSharedSettings((s) => s.usage.disabledProviders);
   const sidebarHiddenProviders = useSharedSettings((s) => s.usage.sidebarHiddenProviders);
@@ -333,6 +396,9 @@ export function ProviderUsageRail(props: { orientation?: "row" | "column" }) {
 
   useEffect(() => {
     let cancelled = false;
+    if (remoteServerId) {
+      void useRemoteServersStore.getState().refreshProviderUsage(remoteServerId);
+    }
     void readBridge()
       .getProviderUsage({})
       .then((res) => {
@@ -344,7 +410,7 @@ export function ProviderUsageRail(props: { orientation?: "row" | "column" }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [remoteServerId]);
 
   // Full set drives the persisted order; the rail only offers the providers the
   // user hasn't individually hidden and that have usage worth a ring — a
@@ -358,8 +424,21 @@ export function ProviderUsageRail(props: { orientation?: "row" | "column" }) {
   const eligible = useProviderUsageStore(
     useShallow((s) => allProviders.map((p) => hasRailUsage(s.snapshots[p.id]))),
   );
+  const remoteEligible = useRemoteServersStore(
+    useShallow((state) => {
+      const snapshots = remoteServerId
+        ? state.runtime[remoteServerId]?.providerUsage?.snapshots
+        : undefined;
+      return allProviders.map((provider) =>
+        hasRailUsage(snapshots?.find((snapshot) => snapshot.providerId === provider.id)),
+      );
+    }),
+  );
+  const scopedEligible = remoteServerId
+    ? eligible.map((isLocalEligible, index) => isLocalEligible || remoteEligible[index])
+    : eligible;
   const providers = allProviders.filter(
-    (p, i) => !sidebarHiddenProviders.includes(p.id) && eligible[i],
+    (p, i) => !sidebarHiddenProviders.includes(p.id) && scopedEligible[i],
   );
 
   if (!showInSidebar || providers.length === 0) return null;
@@ -382,8 +461,17 @@ export function ProviderUsageRail(props: { orientation?: "row" | "column" }) {
         shownCount={RAIL_COLUMN_MAX}
         orientation="column"
         onReorder={handleReorder}
+        {...(remoteServerId ? { remoteServerId } : {})}
+        {...(remoteSourceLabel ? { remoteSourceLabel } : {})}
       />
     );
   }
-  return <UsageRailRow providers={providers} onReorder={handleReorder} />;
+  return (
+    <UsageRailRow
+      providers={providers}
+      onReorder={handleReorder}
+      {...(remoteServerId ? { remoteServerId } : {})}
+      {...(remoteSourceLabel ? { sourceLabel: remoteSourceLabel } : {})}
+    />
+  );
 }

@@ -4,7 +4,13 @@ import { act, fireEvent, renderHook, screen, waitFor } from "@testing-library/re
 import { useGitRefresh } from "@/renderer/hooks/useGitRefresh";
 import { renderWithI18n as render } from "@/renderer/testUtils/i18n";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Experiment, RemoteThreadCommand, Thread, Workspace } from "@/shared/contracts";
+import type {
+  Experiment,
+  Project,
+  RemoteThreadCommand,
+  Thread,
+  Workspace,
+} from "@/shared/contracts";
 import type {
   QuickComposerSubmission,
   SupervisorEvent,
@@ -26,6 +32,7 @@ import { openThread, unloadThread } from "@/renderer/actions/threadActions";
 
 const {
   bridge,
+  databaseStateChangedListeners,
   quickComposerSubmitListeners,
   projectStateChangedListeners,
   remoteThreadCommandListeners,
@@ -39,6 +46,7 @@ const {
   const supervisorListeners: Array<(event: SupervisorEvent) => void> = [];
   const threadOpenListeners: Array<(event: ThreadOpenRequestedEvent) => void> = [];
   const projectListeners: Array<(event: { projects: unknown[] }) => void> = [];
+  const databaseListeners: Array<(event: { projects: unknown[]; threads: unknown[] }) => void> = [];
   return {
     remoteThreadCommandListeners: listeners,
     runWorktreeSetupScript: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -60,8 +68,11 @@ const {
     supervisorEventListeners: supervisorListeners,
     threadOpenRequestedListeners: threadOpenListeners,
     projectStateChangedListeners: projectListeners,
+    databaseStateChangedListeners: databaseListeners,
     bridge: {
       windowKind: "main",
+      dbGetProjects: vi.fn<() => Promise<Project[]>>(),
+      dbGetThreads: vi.fn<() => Promise<Thread[]>>(),
       pickFolder: vi.fn<() => Promise<null>>().mockResolvedValue(null),
       listWslDistros: vi.fn<() => Promise<string[]>>().mockResolvedValue([]),
       getAgentStatuses: vi
@@ -209,6 +220,12 @@ const {
         (listener: (event: { projects: unknown[] }) => void) => () => void
       >((listener) => {
         projectListeners.push(listener);
+        return () => undefined;
+      }),
+      onDatabaseStateChanged: vi.fn<
+        (listener: (event: { projects: unknown[]; threads: unknown[] }) => void) => () => void
+      >((listener) => {
+        databaseListeners.push(listener);
         return () => undefined;
       }),
       onGitStateChanged: vi.fn<() => () => void>(() => () => undefined),
@@ -451,6 +468,8 @@ describe("App", () => {
       lastViewedAtByThreadId: {},
       view: { kind: "home" },
     }));
+    bridge.dbGetProjects.mockImplementation(async () => useAppStore.getState().projects);
+    bridge.dbGetThreads.mockImplementation(async () => useAppStore.getState().threads);
     resetDevTerminalStore();
     useThreadOutputStore.setState({ buffers: {} });
     useUpdateStore.setState({
@@ -1041,6 +1060,23 @@ describe("App", () => {
     expect(useExperimentStore.getState().experiments).toEqual({});
   });
 
+  it("adopts a metadata snapshot written by the other desktop process", () => {
+    const project = {
+      id: "shared-project-1",
+      name: "Shared project",
+      location: { kind: "posix" as const, path: "/shared" },
+      createdAt: "2026-09-28T00:00:00.000Z",
+    };
+    useAppStore.setState({ projects: [], threads: [] });
+    render(<App />);
+
+    act(() => {
+      databaseStateChangedListeners.at(-1)?.({ projects: [project], threads: [] });
+    });
+
+    expect(useAppStore.getState().projects).toEqual([project]);
+  });
+
   it("creates and launches the thread submitted by the quick composer", async () => {
     useAppStore.persist.hasHydrated = vi.fn<() => boolean>().mockReturnValue(true);
     useAppStore.persist.onHydrate = vi.fn<() => () => void>(() => () => undefined);
@@ -1083,10 +1119,12 @@ describe("App", () => {
       agentKind: "codex",
       presentationMode: "gui",
     });
-    expect(screen.getByText("sent from overlay")).toHaveAttribute(
-      "data-pending-launch",
-      "__none__",
-    );
+    await waitFor(() => {
+      expect(screen.getByText("sent from overlay")).toHaveAttribute(
+        "data-pending-launch",
+        "__none__",
+      );
+    });
     expect(bridge.startThread).toHaveBeenCalledWith(
       expect.objectContaining({
         threadId: thread?.id,

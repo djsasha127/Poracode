@@ -3,16 +3,44 @@ import { Trans, useLingui } from "@lingui/react/macro";
 import type { UsageWindow } from "@poracode/agents-usage/types";
 import { openUsagePanel } from "@/renderer/actions/panelActions";
 import { useProviderUsage } from "@/renderer/state/providerUsageStore";
+import { useRemoteServersStore } from "@/renderer/state/remoteServersStore";
 import { useSharedSettings } from "@/renderer/state/sharedSettingsStore";
 import { ProviderUsageCircle } from "./ProviderUsageCircle";
 import { formatWindowValue, usageStatusText } from "./usageFormat";
-import { pickUsageRings, usageRingGroups, type UsageProvider } from "./usageProviders";
+import {
+  pickUsageRings,
+  resolveCombinedUsageSnapshot,
+  usageRingGroups,
+  type UsageProvider,
+} from "./usageProviders";
 import { RAIL_CIRCLE_SIZE } from "./usageRailFit";
 
 /** One compact line per overflowed provider: mini rings, label, ring values. */
-function OverflowRow(props: { id: string; label: string }) {
-  const { id, label } = props;
-  const snapshot = useProviderUsage(id);
+function OverflowRow(props: {
+  id: string;
+  label: string;
+  remoteServerId?: string;
+  remoteSourceLabel?: string;
+}) {
+  const { id, label, remoteServerId, remoteSourceLabel } = props;
+  const { t } = useLingui();
+  const localSnapshot = useProviderUsage(id);
+  const remoteSnapshot = useRemoteServersStore((state) =>
+    remoteServerId
+      ? state.runtime[remoteServerId]?.providerUsage?.snapshots.find(
+          (snapshot) => snapshot.providerId === id,
+        )
+      : undefined,
+  );
+  const selection = remoteServerId
+    ? resolveCombinedUsageSnapshot(localSnapshot, remoteSnapshot)
+    : { snapshot: localSnapshot, source: "local" as const };
+  const snapshot = selection.snapshot;
+  const sourceLabel = remoteServerId
+    ? selection.source === "remote"
+      ? (remoteSourceLabel ?? remoteServerId)
+      : t`Local`
+    : undefined;
   const selectedRingGroups = useSharedSettings((s) => s.usage.selectedRingGroups);
   const ringGroup = selectedRingGroups[id] ?? usageRingGroups(id)[0]?.key;
   const rings = pickUsageRings(id, snapshot?.windows, ringGroup);
@@ -28,7 +56,10 @@ function OverflowRow(props: { id: string; label: string }) {
           size={16}
           ringGroup={ringGroup}
         />
-        <span className="text-muted">{label}</span>
+        <span className="text-muted">
+          {label}
+          {sourceLabel ? <span className="text-muted/60"> · {sourceLabel}</span> : null}
+        </span>
       </span>
       {shownWindows.length > 0 ? (
         <span className="font-medium text-foreground">
@@ -47,8 +78,12 @@ function OverflowRow(props: { id: string; label: string }) {
  * compact line each, so a narrow sidebar hides circles but never information.
  * Clicking opens the docked usage panel, matching the circles it replaces.
  */
-export function UsageOverflowChip(props: { providers: readonly UsageProvider[] }) {
-  const { providers } = props;
+export function UsageOverflowChip(props: {
+  providers: readonly UsageProvider[];
+  remoteServerId?: string;
+  remoteSourceLabel?: string;
+}) {
+  const { providers, remoteServerId, remoteSourceLabel } = props;
   const { t } = useLingui();
   if (providers.length === 0) return null;
   return (
@@ -71,7 +106,13 @@ export function UsageOverflowChip(props: { providers: readonly UsageProvider[] }
           </p>
           <div className="space-y-0.5">
             {providers.map((p) => (
-              <OverflowRow key={p.id} id={p.id} label={p.label} />
+              <OverflowRow
+                key={p.id}
+                id={p.id}
+                label={p.label}
+                {...(remoteServerId ? { remoteServerId } : {})}
+                {...(remoteSourceLabel ? { remoteSourceLabel } : {})}
+              />
             ))}
           </div>
         </div>

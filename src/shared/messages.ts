@@ -180,8 +180,11 @@ const messages = {
   "remote.helper.wrongHost": "The SSH tunnel reached an incompatible Poracode server.",
   "remote.helper.probeFailed": "Poracode Helper is not ready yet (HTTP {status}).",
   "remote.helper.timeout": "Timed out waiting for Poracode Helper.",
-  "remote.helper.startFailed":
-    "Poracode Helper failed to start. Check that Node 24.10 or newer and npm are installed on the remote machine.",
+  "remote.helper.dependenciesMissing":
+    "Poracode Helper could not install its private Node runtime. Check that the remote machine can access nodejs.org, then retry.",
+  "remote.helper.sharedWorkspaceBusy":
+    "The shared Poracode workspace is still in use by another helper. Retry the SSH connection in a few seconds.",
+  "remote.helper.startFailed": "Poracode Helper failed to start. Retry the SSH connection.",
   "ssh.runtimeManifest.invalid": "Poracode SSH runtime manifest is missing or invalid: {path}",
   "remote.project.invalidName": "Enter a valid project name.",
   "remote.project.invalidPath": "Enter a valid absolute project path.",
@@ -363,7 +366,15 @@ const errorPatterns: Array<{
     key: "remote.helper.timeout",
   },
   {
-    test: /Poracode Helper failed to start|Poracode SSH requires (?:Node 24\.10 or newer|npm)|Uploaded Poracode runtime archive was not found|No remote loopback port is available for Poracode/i,
+    test: /Poracode data dir .* is in use by another Poracode process/i,
+    key: "remote.helper.sharedWorkspaceBusy",
+  },
+  {
+    test: /Poracode SSH (?:requires (?:Node 24\.10 or newer|npm)|could not provision its private Node runtime)/i,
+    key: "remote.helper.dependenciesMissing",
+  },
+  {
+    test: /Poracode Helper failed to start|Uploaded Poracode runtime archive was not found|No remote loopback port is available for Poracode/i,
     key: "remote.helper.startFailed",
   },
   {

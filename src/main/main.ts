@@ -1,6 +1,6 @@
-import { watch } from "node:fs";
+import { watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   app,
   BrowserWindow,
@@ -88,6 +88,7 @@ import {
   type SupervisorEvent,
 } from "@/shared/ipc";
 import { defaultSharedSettings, type SharedSettings } from "@/shared/settings";
+import { resolveChannelElectronUserDataDir } from "./channelIdentity";
 import { readSharedSettingsFile, writeSharedSettingsFile } from "./sharedSettingsFile";
 import { remoteProjectCommandResultSchema } from "@/shared/remote";
 import { WindowsJobObjectManager } from "./windowsJobObject";
@@ -97,7 +98,11 @@ import {
   type RendererProcessGoneIntent,
 } from "./diagnostics/processGone";
 import { configureSecretStorageKey } from "@/shared/secretStorage";
-import { readOrCreateSafeStorageSecretKey } from "./secretStorageKey";
+import {
+  readOrCreateLocalSecretStorageKey,
+  readOrCreateSafeStorageSecretKey,
+} from "./secretStorageKey";
+import { usesLocalSigningIdentity } from "./localSigningIdentity";
 import { createDesktopRemoteAccessController, type DesktopRemoteAccessController } from "./remote";
 import { readOrCreateRemoteAccessIdentity } from "./remote/identity";
 import { createGitStateExecutor, GitStateService } from "./gitState";
@@ -122,25 +127,38 @@ import {
   type PrWatchService,
 } from "./prWatch";
 import { shouldUseMockKeychain } from "./mockKeychain";
+import { resolveSharedDatabasePaths } from "./sharedDatabasePaths";
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const channel = resolvePoracodeChannel();
 const baseDirOverride = process.env.PORACODE_BASE_DIR;
 const legacyBaseDirOverride = process.env.LIGHTCODE_BASE_DIR?.trim() || undefined;
 const defaultElectronUserDataDir = app.getPath("userData");
+const channelElectronUserDataDir = resolveChannelElectronUserDataDir(
+  defaultElectronUserDataDir,
+  channel,
+);
 const legacyElectronUserDataDir = legacyBaseDirOverride
   ? join(legacyBaseDirOverride, "userData")
-  : resolveLegacyElectronUserDataDir(defaultElectronUserDataDir, channel, isDev);
+  : resolveLegacyElectronUserDataDir(channelElectronUserDataDir, channel, isDev);
 
 // Electron keys macOS Keychain and Linux secret-store entries by app name.
 // Initialize Chromium's crypto under the pre-rebrand technical identity so
 // migrated secrets and browser sessions remain decryptable. The visible name
 // is restored after Electron captures the crypto configuration during startup.
-const preserveLegacySafeStorageIdentity = !isDev && process.platform !== "win32";
+// Locally ad-hoc-signed macOS builds cannot satisfy the ACL on the keychain item
+// created by the notarized release. Detect those builds (with an env/build
+// override for diagnostics) so startup does not block behind an invisible
+// Keychain prompt.
+// Official packages keep the legacy identity and therefore retain credential
+// compatibility across the Lightcode -> Poracode rename.
+const localSigningIdentity = usesLocalSigningIdentity();
+const preserveLegacySafeStorageIdentity =
+  !isDev && process.platform !== "win32" && !localSigningIdentity;
 if (preserveLegacySafeStorageIdentity) {
   app.setName(legacyProductNameFor(channel));
-  app.setPath("userData", defaultElectronUserDataDir);
 }
+app.setPath("userData", channelElectronUserDataDir);
 
 if (process.env.PORACODE_CDP_PORT) {
   app.commandLine.appendSwitch("remote-debugging-port", process.env.PORACODE_CDP_PORT);
@@ -178,7 +196,7 @@ const hasSingleInstanceLock = isDev || app.requestSingleInstanceLock();
 let poracodePaths: PoracodePaths | null = null;
 if (hasSingleInstanceLock) {
   const electronUserDataDir = app.getPath("userData");
-  poracodePaths = preparePoracodeDataRoot(
+  const localPaths = preparePoracodeDataRoot(
     baseDirOverride ?? (isDev ? join(homedir(), ".poracode-dev") : resolvePoracodeBaseDir(channel)),
     {
       channel,
@@ -188,6 +206,12 @@ if (hasSingleInstanceLock) {
       allowCustomDataRoot: app.isPackaged,
     },
   );
+  poracodePaths = resolveSharedDatabasePaths({
+    channel,
+    localPaths,
+    isDev,
+    hasBaseDirOverride: Boolean(baseDirOverride),
+  });
 }
 
 const sentryEnabled = initializeMainSentry({ appVersion: app.getVersion(), isDev, channel });
@@ -213,6 +237,9 @@ const posthogEnableDev = process.env.POSTHOG_ENABLE_DEV === "1";
 const WINDOW_CHROME_HEIGHT = 32;
 
 let mainWindow: BrowserWindow | null = null;
+let sharedDatabaseWatcher: FSWatcher | null = null;
+let sharedDatabaseWatchDebounce: ReturnType<typeof setTimeout> | null = null;
+let lastSharedDatabaseSnapshot = "";
 let quickComposerWindow: BrowserWindow | null = null;
 let quickComposerDialogOpen = false;
 let quickComposerDismissTimer: ReturnType<typeof setTimeout> | null = null;
@@ -627,6 +654,49 @@ function requirePoracodePaths(): PoracodePaths {
   return poracodePaths;
 }
 
+function publishSharedDatabaseSnapshot(force = false): void {
+  const projects = dbGetProjects();
+  const threads = dbGetThreads();
+  const snapshot = JSON.stringify({ projects, threads });
+  if (!force && snapshot === lastSharedDatabaseSnapshot) return;
+  lastSharedDatabaseSnapshot = snapshot;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC_EVENT_CHANNELS.databaseStateChanged, { projects, threads });
+}
+
+function startSharedDatabaseWatcher(dbPath: string): void {
+  sharedDatabaseWatcher?.close();
+  sharedDatabaseWatcher = null;
+  lastSharedDatabaseSnapshot = JSON.stringify({
+    projects: dbGetProjects(),
+    threads: dbGetThreads(),
+  });
+  const databaseName = basename(dbPath);
+  try {
+    sharedDatabaseWatcher = watch(dirname(dbPath), (_eventType, filename) => {
+      const changedName = filename?.toString();
+      if (
+        changedName &&
+        changedName !== databaseName &&
+        !changedName.startsWith(`${databaseName}-`)
+      ) {
+        return;
+      }
+      if (sharedDatabaseWatchDebounce) clearTimeout(sharedDatabaseWatchDebounce);
+      sharedDatabaseWatchDebounce = setTimeout(() => {
+        sharedDatabaseWatchDebounce = null;
+        try {
+          publishSharedDatabaseSnapshot();
+        } catch (error) {
+          console.warn("[poracode] failed to refresh shared database snapshot:", error);
+        }
+      }, 250);
+    });
+  } catch (error) {
+    console.warn("[poracode] shared database watcher unavailable:", error);
+  }
+}
+
 function updatePowerSaveBlocker(): void {
   if (!poracodePaths) {
     sleepInhibitor.setActive(workingThreads.size > 0);
@@ -721,7 +791,10 @@ if (!hasSingleInstanceLock) {
       }
 
       initDatabase(paths.dbPath);
-      const secretStorageKey = readOrCreateSafeStorageSecretKey(paths.baseDir);
+      startSharedDatabaseWatcher(paths.dbPath);
+      const secretStorageKey = localSigningIdentity
+        ? readOrCreateLocalSecretStorageKey(paths.baseDir)
+        : readOrCreateSafeStorageSecretKey(paths.baseDir);
       // Configure the same key in main so it can seal captured secrets (e.g. usage
       // login cookies); the supervisor configures it from the env var it receives.
       configureSecretStorageKey(secretStorageKey);
@@ -764,7 +837,13 @@ if (!hasSingleInstanceLock) {
         bundledPluginsDir,
         secretStorageKey,
         resolveExtraEnv: () => {
-          const env: Record<string, string> = {};
+          const env: Record<string, string> = {
+            PORACODE_CHANNEL: channel === "nightly" ? "Poracode Nightly" : "Poracode Stable",
+            PORACODE_SHARED_THREAD_LEASES_DIR: join(
+              dirname(requirePoracodePaths().dbPath),
+              "thread-leases",
+            ),
+          };
           const browserInfo = browserMcpIngress?.getInfo();
           if (browserInfo) {
             env.PORACODE_BROWSER_MCP_URL = browserInfo.url;
@@ -1229,6 +1308,10 @@ if (!hasSingleInstanceLock) {
         const window = BrowserWindow.fromWebContents(event.sender);
         if (!window || window !== mainWindow || window.isDestroyed()) return;
         mainRendererReady = true;
+        // The database watcher snapshots state before the renderer subscribes.
+        // Always replay the current shared database once hydration is complete,
+        // even when Stable has not changed the SQLite file since Nightly started.
+        publishSharedDatabaseSnapshot(true);
         flushQuickComposerSubmissions();
         flushTrayThreadOpen();
       });
@@ -1318,6 +1401,10 @@ if (!hasSingleInstanceLock) {
 
       app.on("before-quit", () => {
         isQuitting = true;
+        sharedDatabaseWatcher?.close();
+        sharedDatabaseWatcher = null;
+        if (sharedDatabaseWatchDebounce) clearTimeout(sharedDatabaseWatchDebounce);
+        sharedDatabaseWatchDebounce = null;
         quickComposerShortcutManager?.dispose();
         quickComposerShortcutManager = null;
         if (quickComposerDismissTimer) clearTimeout(quickComposerDismissTimer);

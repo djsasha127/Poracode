@@ -41,11 +41,11 @@ registerConflictResolverDefaults(PROVIDER_KIND, MUSE_UTILITY_DEFAULTS);
 registerComposerControls(PROVIDER_KIND, (input) => standardPlanApprovalControls(input));
 
 // `/compact` is the only Muse TUI built-in the session protocol exposes to a
-// GUI thread. The other built-ins (`/goal`, `/fork`, `/status`, `/usage`,
-// `/theme`, …) are deliberately absent: MSP has no command-listing method, so
-// there is nothing to discover, and no goal API in `muse serve` sessions
-// (`create_goal` is not offered as a tool), so `/goal` cannot work here.
-// Skills are a separate surface, enumerated by `muse skills list`.
+// GUI thread. Poracode-owned commands such as `/status` are added by the
+// standard GUI router below. Provider-only commands (`/goal`, `/fork`,
+// `/usage`, `/theme`, …) remain absent: MSP has no command-listing method, and
+// no goal API is offered by `muse serve`. Skills are a separate surface,
+// enumerated by `muse skills list`.
 registerGuiSlashCommands(PROVIDER_KIND, {
   // Muse has no plan/agent/fast modes, so filter those out after building.
   buildCommands: (ctx) =>

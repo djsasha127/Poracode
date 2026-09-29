@@ -1,11 +1,15 @@
 import {
   providerUsagePayloadSchema,
+  refreshUsageHistoryPayloadSchema,
   usageApiKeyPayloadSchema,
+  usageHistoryDigestPayloadSchema,
+  usageHistoryPagePayloadSchema,
   usageLoginConfirmationPayloadSchema,
   usageLoginPayloadSchema,
   usageLoginStatePayloadSchema,
   type ProviderUsagePayload,
   type ProviderUsageResponse,
+  type RefreshUsageHistoryPayload,
   type UsageApiKeyPayload,
   type UsageLoginConfirmationPayload,
   type UsageLoginPayload,
@@ -13,6 +17,10 @@ import {
   type UsageLoginStatePayload,
   type UsageLoginStateResponse,
   type UsageLogoutResult,
+  type UsageHistoryDigest,
+  type UsageHistoryDigestPayload,
+  type UsageHistoryPagePayload,
+  type UsageHistoryPageResponse,
 } from "../../contracts";
 import { definePayloadProcedure } from "../core";
 
@@ -37,6 +45,11 @@ export const usageProcedures = {
     "main-local",
     usageApiKeyPayloadSchema,
   ),
+  setProviderUsageApiKey: definePayloadProcedure<
+    UsageApiKeyPayload,
+    UsageLoginResult,
+    "supervisor"
+  >("setProviderUsageApiKey", "supervisor", usageApiKeyPayloadSchema),
   resolveUsageLoginConfirmation: definePayloadProcedure<
     UsageLoginConfirmationPayload,
     void,
@@ -57,4 +70,19 @@ export const usageProcedures = {
     ProviderUsageResponse,
     "supervisor"
   >("refreshProviderUsage", "supervisor", providerUsagePayloadSchema),
+  getUsageHistoryDigest: definePayloadProcedure<
+    UsageHistoryDigestPayload,
+    UsageHistoryDigest,
+    "supervisor"
+  >("getUsageHistoryDigest", "supervisor", usageHistoryDigestPayloadSchema),
+  getUsageHistoryPage: definePayloadProcedure<
+    UsageHistoryPagePayload,
+    UsageHistoryPageResponse,
+    "supervisor"
+  >("getUsageHistoryPage", "supervisor", usageHistoryPagePayloadSchema),
+  refreshUsageHistory: definePayloadProcedure<
+    RefreshUsageHistoryPayload,
+    UsageHistoryDigest,
+    "supervisor"
+  >("refreshUsageHistory", "supervisor", refreshUsageHistoryPayloadSchema),
 } as const;

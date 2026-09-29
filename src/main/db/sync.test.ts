@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,7 @@ import {
   dbGetProjects,
   dbGetState,
   dbGetThread,
+  dbGetThreads,
   dbUpsertProject,
   dbUpsertThread,
 } from "./projectsThreads";
@@ -73,13 +75,15 @@ function persistLaunchUserMessage(threadId: string): void {
 
 describe.skipIf(!sqliteAvailable)("dbSyncAll thread ownership", () => {
   let dir: string;
+  let databasePath: string;
 
   beforeEach(() => {
     if (nativeBindingEnv) {
       process.env.PORACODE_BETTER_SQLITE3_NATIVE_BINDING = nativeBindingEnv;
     }
     dir = mkdtempSync(join(tmpdir(), "poracode-sync-db-test-"));
-    initDatabase(join(dir, "state.sqlite"));
+    databasePath = join(dir, "state.sqlite");
+    initDatabase(databasePath);
     dbUpsertProject(project, 0);
   });
 
@@ -438,5 +442,67 @@ describe.skipIf(!sqliteAvailable)("dbSyncAll thread ownership", () => {
     const { workspaceId: _dropped, ...unfiled } = tagged;
     dbSyncAll([project], [unfiled, untagged], "{}");
     expect(dbGetThread("thread-tagged")?.workspaceId).toBeUndefined();
+  });
+
+  it("preserves rows written by another app after the renderer baseline", () => {
+    const original = { ...remoteStartedThread(), id: "thread-original", title: "Original" };
+    const external = { ...remoteStartedThread(), id: "thread-external", title: "External" };
+    dbUpsertThread(original, 0);
+
+    const baseProjects = [project];
+    const baseThreads = [original];
+    dbUpsertThread(external, 1);
+    dbUpsertThread({ ...original, title: "Renamed externally" }, 0);
+
+    // A stale renderer persists an unrelated view update. It must neither
+    // delete the newly-created row nor restore its old copy of original.
+    dbSyncAll([project], [original], "{}", baseProjects, baseThreads);
+    expect(dbGetThread("thread-original")?.title).toBe("Renamed externally");
+    expect(dbGetThread("thread-external")?.title).toBe("External");
+
+    // An explicit deletion is scoped to rows that renderer actually knew.
+    dbSyncAll([project], [], "{}", baseProjects, baseThreads);
+    expect(dbGetThreads().map((thread) => thread.id)).toEqual(["thread-external"]);
+  });
+
+  it("waits for another app's WAL writer instead of failing with SQLITE_BUSY", async () => {
+    const childScript = `
+      const Database = require("better-sqlite3");
+      const options = process.env.PORACODE_BETTER_SQLITE3_NATIVE_BINDING
+        ? { nativeBinding: process.env.PORACODE_BETTER_SQLITE3_NATIVE_BINDING }
+        : undefined;
+      const sqlite = new Database(process.argv[1], options);
+      sqlite.pragma("journal_mode = WAL");
+      sqlite.exec("BEGIN IMMEDIATE");
+      process.stdout.write("locked\\n");
+      setTimeout(() => {
+        sqlite.exec("COMMIT");
+        sqlite.close();
+      }, 250);
+    `;
+    const writer = spawn(process.execPath, ["-e", childScript, databasePath], {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stderr: Buffer[] = [];
+    writer.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    const writerExit = new Promise<void>((resolve, reject) => {
+      writer.once("error", reject);
+      writer.once("exit", (code) =>
+        code === 0 ? resolve() : reject(new Error(Buffer.concat(stderr).toString())),
+      );
+    });
+    await new Promise<void>((resolve, reject) => {
+      writer.once("error", reject);
+      writer.stdout.once("data", (chunk: Buffer) => {
+        if (chunk.toString().includes("locked")) resolve();
+        else reject(new Error(`Unexpected writer output: ${chunk.toString()}`));
+      });
+      void writerExit.catch(reject);
+    });
+
+    expect(() => dbSyncAll([project], [], JSON.stringify({ kind: "home" }))).not.toThrow();
+    await writerExit;
   });
 });

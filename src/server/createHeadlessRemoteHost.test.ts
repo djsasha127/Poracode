@@ -152,6 +152,7 @@ describe("createHeadlessRemoteHost", () => {
       protocolVersion: PORACODE_REMOTE_PROTOCOL_VERSION,
       hostMode: "helper",
       appVersion: "9.9.9-test",
+      capabilities: { usageHistory: 1 },
     });
 
     await host.dispose();

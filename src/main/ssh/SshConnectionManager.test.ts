@@ -99,6 +99,7 @@ function helperDescriptor(appVersion: string) {
     desktopId: "remote-test",
     label: "Remote test",
     appVersion,
+    capabilities: { usageHistory: 1 },
     platform: "linux",
     auth: {
       policy: "remote-reachable",
@@ -378,6 +379,7 @@ describe("SSH helper readiness", () => {
       desktopId: "remote-test",
       label: "Remote test",
       appVersion: "test",
+      capabilities: { usageHistory: 1 },
       platform: "linux",
       auth: {
         policy: "remote-reachable",

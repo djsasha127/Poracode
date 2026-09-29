@@ -7,6 +7,8 @@ import { useAppHydration } from "./useAppHydration";
 
 const mocks = vi.hoisted(() => ({
   bridge: {
+    dbGetProjects: vi.fn<() => Promise<Project[]>>(),
+    dbGetThreads: vi.fn<() => Promise<Thread[]>>(),
     getThreadSnapshots: vi.fn<() => Promise<ThreadRuntimeSnapshot[]>>(),
     closeThread: vi.fn<(payload: { threadId: string }) => Promise<void>>(),
     onPrWatchMerged: vi.fn<() => () => void>(() => () => undefined),
@@ -83,6 +85,8 @@ describe("useAppHydration experiments", () => {
       threads: [thread("candidate-1"), thread("candidate-2"), thread("unrelated")],
       view: { kind: "home" },
     }));
+    mocks.bridge.dbGetProjects.mockImplementation(async () => useAppStore.getState().projects);
+    mocks.bridge.dbGetThreads.mockImplementation(async () => useAppStore.getState().threads);
     const experiment: Experiment = {
       id: "experiment-1",
       projectId: project.id,
@@ -196,6 +200,38 @@ describe("useAppHydration experiments", () => {
         "working",
       );
     });
+  });
+
+  it("adopts the authoritative database snapshot before showing the UI", async () => {
+    const sharedProject: Project = {
+      ...project,
+      id: "shared-project",
+      name: "Shared project",
+      location: { kind: "posix", path: "/shared" },
+    };
+    const sharedThread: Thread = {
+      ...thread("shared-thread"),
+      projectId: sharedProject.id,
+      title: "Shared thread",
+    };
+    let resolveThreads!: (threads: Thread[]) => void;
+    mocks.bridge.dbGetProjects.mockResolvedValueOnce([sharedProject]);
+    mocks.bridge.dbGetThreads.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveThreads = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() => useAppHydration());
+
+    await waitFor(() => expect(mocks.bridge.dbGetThreads).toHaveBeenCalled());
+    expect(result.current.initialLoading).toBe(true);
+    act(() => resolveThreads([sharedThread]));
+    await waitFor(() => expect(result.current.initialLoading).toBe(false));
+    expect(useAppStore.getState().projects).toEqual([sharedProject]);
+    expect(useAppStore.getState().threads).toEqual([
+      expect.objectContaining({ id: "shared-thread", title: "Shared thread" }),
+    ]);
   });
 
   it("recovers candidate worktree paths from their durable branches before showing the UI", async () => {

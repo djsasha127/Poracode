@@ -9,6 +9,7 @@ import {
 import { isHomeProjectId } from "@/shared/homeScope";
 import { useAppStore } from "./appStore";
 import { useSharedSettings } from "./sharedSettingsStore";
+import { orderProjectIds, useSidebarUiStore } from "./sidebarUiStore";
 import { useActiveWorkspaceId } from "./workspaceStore";
 
 /**
@@ -52,13 +53,15 @@ export function useWorkspaceThreadFilter(): (thread: Thread) => boolean {
 /** Ids of projects the active workspace shows, in store order. Excludes Home. */
 export function useWorkspaceProjectIds(): string[] {
   const isVisible = useWorkspaceProjectFilter();
-  return useAppStore(
+  const projectOrder = useSidebarUiStore((state) => state.projectOrder);
+  const projectIds = useAppStore(
     useShallow((state) =>
       state.projects
         .filter((project) => !isHomeProjectId(project.id) && isVisible(project))
         .map((project) => project.id),
     ),
   );
+  return orderProjectIds(projectIds, projectOrder);
 }
 
 /**

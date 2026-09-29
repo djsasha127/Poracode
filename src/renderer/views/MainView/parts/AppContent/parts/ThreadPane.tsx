@@ -85,7 +85,12 @@ export function ThreadPane(props: {
     type: "pane",
     data: { type: "pane", paneId: props.threadId } satisfies DragSourceData,
     disabled: props.paneCount <= 1,
-    element: paneElementRef,
+    // A disabled Draggable writes aria-disabled="true" to its element. When
+    // that element is the whole single-pane thread, accessibility consumers
+    // correctly treat every composer control below it as disabled. Keep the
+    // pane registered as a drop target, but only attach draggable semantics
+    // when there is another pane to reorder it against.
+    element: props.paneCount > 1 ? paneElementRef : undefined,
   });
   useDroppable({
     id: `pane-drop:${props.threadId}`,

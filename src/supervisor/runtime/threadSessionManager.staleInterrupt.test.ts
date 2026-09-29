@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -116,6 +116,7 @@ function createAdapter(structuredSession: StructuredSessionHandle): AgentAdapter
 function createManager(adapter: AgentAdapter): {
   manager: ThreadSessionManager;
   events: SupervisorEvent[];
+  tempDir: string;
 } {
   const tempDir = mkdtempSync(join(tmpdir(), "poracode-stale-interrupt-"));
   tempDirs.push(tempDir);
@@ -136,7 +137,7 @@ function createManager(adapter: AgentAdapter): {
     }),
   });
   managersToDispose.push(manager);
-  return { manager, events };
+  return { manager, events, tempDir };
 }
 
 function createWorkingSession(
@@ -301,7 +302,7 @@ describe("ThreadSessionManager structured stale-interrupt watchdog", () => {
   it("restarts a force-stopped GUI session on the next submit", async () => {
     const structuredSession = createStructuredSession();
     const adapter = createAdapter(structuredSession);
-    const { manager } = createManager(adapter);
+    const { manager, tempDir } = createManager(adapter);
     const session = createWorkingSession(adapter, structuredSession);
     manager.sessions.set(THREAD_ID, session);
 
@@ -314,9 +315,11 @@ describe("ThreadSessionManager structured stale-interrupt watchdog", () => {
     const replacementSession = createStructuredSession({ startTurn });
     vi.mocked(adapter.createStructuredSession).mockResolvedValue(replacementSession);
 
+    const attachmentPath = join(tempDir, "reference.png");
+    writeFileSync(attachmentPath, "test image fixture");
     const segments = [
       { kind: "text" as const, content: "after force stop" },
-      { kind: "attachment" as const, path: "/tmp/reference.png", mimeType: "image/png" },
+      { kind: "attachment" as const, path: attachmentPath, mimeType: "image/png" },
     ];
     await manager.sendThreadInput({
       threadId: THREAD_ID,
@@ -328,7 +331,7 @@ describe("ThreadSessionManager structured stale-interrupt watchdog", () => {
 
     expect(startTurn).toHaveBeenCalledTimes(1);
     expect(startTurn).toHaveBeenCalledWith(
-      "after force stop\n\n@/tmp/reference.png ",
+      `after force stop\n\n@${attachmentPath} `,
       { model: `${AGENT_KIND}/model` },
       segments,
       { userMessageItemId: "user-after-force-stop" },
@@ -455,7 +458,7 @@ describe("ThreadSessionManager steer capability", () => {
     };
   }
 
-  it("submit-while-working uses steerTurn without interrupting when available", async () => {
+  it("submit-while-working queues FIFO even when native steering is available", async () => {
     const structuredSession = steerableSession(true);
     const adapter = createAdapter(structuredSession);
     const { manager } = createManager(adapter);
@@ -467,19 +470,22 @@ describe("ThreadSessionManager steer capability", () => {
       prompt: "steer me",
       config: { model: `${AGENT_KIND}/model` },
     });
+    await manager.sendThreadInput({
+      threadId: THREAD_ID,
+      prompt: "then this",
+      config: { model: `${AGENT_KIND}/model` },
+    });
 
-    expect(structuredSession.steerTurn).toHaveBeenCalledTimes(1);
-    expect(structuredSession.steerTurn).toHaveBeenCalledWith(
+    expect(session.queuedStructuredTurns?.map((turn) => turn.prompt)).toEqual([
       "steer me",
-      { model: `${AGENT_KIND}/model` },
-      undefined,
-      undefined,
-    );
+      "then this",
+    ]);
+    expect(structuredSession.steerTurn).not.toHaveBeenCalled();
     expect(structuredSession.interruptTurn).not.toHaveBeenCalled();
     expect(structuredSession.startTurn).not.toHaveBeenCalled();
   });
 
-  it("submit-while-working falls back to interrupt-drain when steerTurn is absent", async () => {
+  it("submit-while-working queues without interrupting when steerTurn is absent", async () => {
     const structuredSession = steerableSession(false);
     const adapter = createAdapter(structuredSession);
     const { manager } = createManager(adapter);
@@ -492,8 +498,46 @@ describe("ThreadSessionManager steer capability", () => {
       config: { model: `${AGENT_KIND}/model` },
     });
 
-    expect(structuredSession.interruptTurn).toHaveBeenCalledTimes(1);
+    expect(session.queuedStructuredTurns?.map((turn) => turn.prompt)).toEqual(["steer me"]);
+    expect(structuredSession.interruptTurn).not.toHaveBeenCalled();
     expect(structuredSession.startTurn).not.toHaveBeenCalled();
+  });
+
+  it("agent auto-delivery steers natively while the target is working", async () => {
+    const structuredSession = steerableSession(true);
+    const adapter = createAdapter(structuredSession);
+    const { manager } = createManager(adapter);
+    const session = createWorkingSession(adapter, structuredSession);
+    manager.sessions.set(THREAD_ID, session);
+
+    await manager.sendThreadInput({
+      threadId: THREAD_ID,
+      prompt: "new evidence",
+      config: { model: `${AGENT_KIND}/model` },
+      deliveryPolicy: "auto",
+    });
+
+    expect(structuredSession.steerTurn).toHaveBeenCalledTimes(1);
+    expect(session.queuedStructuredTurns).toBeUndefined();
+    expect(structuredSession.interruptTurn).not.toHaveBeenCalled();
+  });
+
+  it("agent auto-delivery queues FIFO when native steering is unavailable", async () => {
+    const structuredSession = steerableSession(false);
+    const adapter = createAdapter(structuredSession);
+    const { manager } = createManager(adapter);
+    const session = createWorkingSession(adapter, structuredSession);
+    manager.sessions.set(THREAD_ID, session);
+
+    await manager.sendThreadInput({
+      threadId: THREAD_ID,
+      prompt: "new evidence",
+      config: { model: `${AGENT_KIND}/model` },
+      deliveryPolicy: "auto",
+    });
+
+    expect(session.queuedStructuredTurns?.map((turn) => turn.prompt)).toEqual(["new evidence"]);
+    expect(structuredSession.interruptTurn).not.toHaveBeenCalled();
   });
 
   it("setPendingSteer uses steerTurn without interrupting when available", async () => {

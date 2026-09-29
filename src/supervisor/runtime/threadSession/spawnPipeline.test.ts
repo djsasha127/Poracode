@@ -295,4 +295,23 @@ describe("composeResolvedMcpServers", () => {
     expect(servers.map((server) => server.name)).toEqual(["custom", "browser", "crossagents"]);
     expect(servers[2]).toMatchObject({ timeoutMs: 300_000, approvalMode: "approve" });
   });
+
+  it("keeps long-running app-control orchestration alive", () => {
+    const servers = composeResolvedMcpServers(
+      { mcpServers: [], disabledBuiltInMcpServerIds: [] },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        url: "http://poracode/mcp",
+        token: "p",
+        headers: { Authorization: "Bearer p" },
+      },
+    );
+
+    expect(servers).toEqual([
+      expect.objectContaining({ id: "app-controls", timeoutMs: 1_800_000 }),
+    ]);
+  });
 });

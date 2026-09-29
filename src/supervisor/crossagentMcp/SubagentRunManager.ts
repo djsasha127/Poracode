@@ -95,6 +95,8 @@ interface RunRecord extends AttemptExecutionState {
   attemptIndex: number;
   attemptSettled: boolean;
   steering: SteerState | undefined;
+  queuedMessages: string[];
+  messageDeliveryInFlight: boolean;
   attemptResults: SubagentAttemptResult[];
   status: SubagentRunStatus;
   /** Assistant text accumulated for the current attempt. */
@@ -262,6 +264,8 @@ export class SubagentRunManager {
       attemptIndex: 0,
       attemptSettled: false,
       steering: undefined,
+      queuedMessages: [],
+      messageDeliveryInFlight: false,
       attemptResults: [],
       status: "running",
       output: "",
@@ -400,6 +404,7 @@ export class SubagentRunManager {
           record.steerReady &&
           !record.steering &&
           handleSupportsSteer(record.handle),
+        queued_messages: record.queuedMessages.length,
       });
     }
     return out;
@@ -464,7 +469,62 @@ export class SubagentRunManager {
           this.finishAttempt(record, attemptIndex, "completed");
         }
       }
+      this.maybeDrainQueuedMessage(record);
     }
+  }
+
+  /**
+   * Deliver a parent message without making the caller race child startup or a
+   * previous delivery. A ready structured child receives a native/fallback
+   * steer immediately; otherwise the message waits FIFO until that same child
+   * can accept it. One-shot children cannot continue a conversation.
+   */
+  async sendMessage(
+    runId: string,
+    prompt: string,
+    parentThreadId: string,
+  ): Promise<"steered" | "queued"> {
+    const record = this.ownedRun(runId, parentThreadId);
+    if (!record) throw new SubagentSpawnError(`Unknown run_id: ${runId}`);
+    if (record.status !== "running") throw new SubagentSpawnError("Subagent is no longer running");
+    if (record.plan.attempts[record.attemptIndex]?.execution === "one-shot") {
+      throw new SubagentSpawnError("This one-shot subagent cannot receive follow-up messages");
+    }
+    if (record.steerReady && !record.steering && handleSupportsSteer(record.handle)) {
+      await this.steer(runId, prompt, parentThreadId);
+      return "steered";
+    }
+    record.queuedMessages.push(prompt);
+    this.maybeDrainQueuedMessage(record);
+    return "queued";
+  }
+
+  private maybeDrainQueuedMessage(record: RunRecord): void {
+    if (
+      record.status !== "running" ||
+      record.messageDeliveryInFlight ||
+      record.steering ||
+      !record.steerReady ||
+      !handleSupportsSteer(record.handle)
+    ) {
+      return;
+    }
+    const prompt = record.queuedMessages.shift();
+    if (!prompt) return;
+    record.messageDeliveryInFlight = true;
+    let failed = false;
+    void this.steer(record.runId, prompt, record.parentThreadId)
+      .catch((error) => {
+        failed = true;
+        if (record.status === "running") {
+          record.queuedMessages.unshift(prompt);
+          console.warn("[crossagents] queued child message delivery failed:", error);
+        }
+      })
+      .finally(() => {
+        record.messageDeliveryInFlight = false;
+        if (!failed) this.maybeDrainQueuedMessage(record);
+      });
   }
 
   /**
@@ -677,6 +737,7 @@ export class SubagentRunManager {
     record.attemptIndex = attemptIndex;
     record.attemptSettled = false;
     record.steering = undefined;
+    record.messageDeliveryInFlight = false;
     record.childThreadId = this.childThreadId(record.parentThreadId, record.runId, attemptIndex);
     record.label = attempt.label;
     record.output = "";
@@ -706,7 +767,9 @@ export class SubagentRunManager {
       isActive: () => this.isCurrentAttempt(record, attemptIndex),
       onWorking: () => {
         if (record.steering?.completion === "pending") record.steering.completion = "resumed";
+        this.maybeDrainQueuedMessage(record);
       },
+      onReady: () => this.maybeDrainQueuedMessage(record),
       onRuntimeEvent: (event) => this.onChildEvent(record, attemptIndex, event),
       onSettle: (status, errorMessage) =>
         this.finishAttempt(record, attemptIndex, status, errorMessage),
@@ -769,6 +832,7 @@ export class SubagentRunManager {
         // A native steer can start a follow-up turn if the original finished
         // during its round-trip. Keep that new turn alive until it completes.
         if (record.steering?.completion === "pending") record.steering.completion = "resumed";
+        this.maybeDrainQueuedMessage(record);
         break;
       case "content.delta":
         if (event.stream === "assistant_text") {

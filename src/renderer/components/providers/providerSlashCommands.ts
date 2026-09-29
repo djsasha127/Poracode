@@ -11,9 +11,27 @@ export interface GuiSlashCommandScope {
   runtimeLabel?: string | undefined;
 }
 
+export type LocalSlashCommandSurface =
+  | "status"
+  | "context"
+  | "diff"
+  | "review"
+  | "fork"
+  | "side"
+  | "resume"
+  | "new"
+  | "archive"
+  | "tasks"
+  | "import"
+  | "add-dir"
+  | "mcp"
+  | "plugins"
+  | "permissions";
+
 export type LocalSlashCommandAction =
   | { kind: "set-mode"; mode: "agent" | "plan" }
   | { kind: "open-control"; target: "model" | "effort" }
+  | { kind: "open-surface"; target: LocalSlashCommandSurface }
   | { kind: "toggle-fast" };
 
 export interface GuiSlashCommandRegistration {

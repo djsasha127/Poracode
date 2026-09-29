@@ -600,6 +600,27 @@ describe("Poracode app control tools — threads", () => {
     });
   });
 
+  it("create_thread can put another account profile in the same project", async () => {
+    const { ctx, createThread } = context();
+    await dispatchTool(
+      "create_thread",
+      {
+        projectId: "project-1",
+        prompt: "Review the current work",
+        agentKind: "codex:work",
+        model: "gpt-5.5",
+      },
+      ctx,
+    );
+    expect(createThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        agentKind: "codex:work",
+        model: "gpt-5.5",
+      }),
+    );
+  });
+
   it("create_thread requests a worktree only when enabled", async () => {
     const { ctx, createThread } = context();
     await dispatchTool(
@@ -645,7 +666,11 @@ describe("Poracode app control tools — threads", () => {
     );
     expect(supervisor.interruptThread).toHaveBeenCalledWith({ threadId: "a" });
     expect(supervisor.sendThreadInput).toHaveBeenCalledWith(
-      expect.objectContaining({ threadId: "a", prompt: "hello" }),
+      expect.objectContaining({
+        threadId: "a",
+        prompt: "hello",
+        deliveryPolicy: "auto",
+      }),
     );
     expect(supervisor.startThread).not.toHaveBeenCalled();
   });

@@ -5,8 +5,10 @@ import { useDevTerminalStore } from "@/renderer/state/devTerminalStore";
 import { EMPTY_BOTTOM_PANEL_DOCKS, usePanelStore } from "@/renderer/state/panelStore";
 import { useSharedSettings } from "@/renderer/state/sharedSettingsStore";
 import { useAgentStatusesStore } from "@/renderer/state/agentStatusesStore";
-import type { AgentStatus } from "@/shared/contracts";
+import { useAppStore } from "@/renderer/state/appStore";
+import type { AgentStatus, Project, Thread } from "@/shared/contracts";
 import {
+  selectCurrentRemoteServerId,
   useIsProjectGitPanelActive,
   useIsWorktreeFilesPanelActive,
   useIsWorktreeGitPanelActive,
@@ -170,5 +172,38 @@ describe("thread agent statuses", () => {
     );
 
     expect(result.current.map((status) => status.kind)).toEqual(["ubuntu-agent"]);
+  });
+});
+
+describe("current usage host", () => {
+  it("uses the focused remote pane instead of the first split pane", () => {
+    const previous = useAppStore.getState();
+    try {
+      useAppStore.setState({
+        projects: [
+          { id: "local-project", remoteServerId: undefined } as Project,
+          { id: "remote-project", remoteServerId: "desktop-1" } as Project,
+        ],
+        threads: [
+          { id: "local-thread", projectId: "local-project" } as Thread,
+          {
+            id: "remote-thread",
+            projectId: "remote-project",
+            remoteServerId: "desktop-1",
+          } as Thread,
+        ],
+        view: { kind: "thread", panes: ["local-thread", "remote-thread"] },
+        focusedPaneId: "remote-thread",
+      });
+
+      expect(selectCurrentRemoteServerId(useAppStore.getState())).toBe("desktop-1");
+    } finally {
+      useAppStore.setState({
+        projects: previous.projects,
+        threads: previous.threads,
+        view: previous.view,
+        focusedPaneId: previous.focusedPaneId,
+      });
+    }
   });
 });

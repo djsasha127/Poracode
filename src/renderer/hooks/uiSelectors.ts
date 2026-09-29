@@ -36,7 +36,7 @@ const EMPTY_STRINGS: string[] = [];
 const EMPTY_THREADS: Thread[] = [];
 const EMPTY_AGENT_STATUSES: AgentStatus[] = [];
 
-function selectCurrentProjectId(s: ReturnType<typeof useAppStore.getState>) {
+export function selectCurrentProjectId(s: ReturnType<typeof useAppStore.getState>) {
   const v = s.view;
   if (v.kind === "draft" || v.kind === "experiment") return v.projectId;
   if (v.kind === "thread") {
@@ -72,6 +72,30 @@ export function useLiveBackgroundThreadIds(threads: readonly Thread[]): Readonly
 
 export function useCurrentProjectId(): string | undefined {
   return useAppStore(selectCurrentProjectId);
+}
+
+/** Remote host that owns the currently focused project/thread, if any. */
+export function selectCurrentRemoteServerId(
+  s: ReturnType<typeof useAppStore.getState>,
+): string | undefined {
+  if (s.view.kind === "thread") {
+    const paneId = resolveActivePaneId(s.view.panes, s.focusedPaneId);
+    if (paneId) {
+      const draftProjectId = parseDraftProjectId(paneId);
+      if (draftProjectId) {
+        return s.projects.find((project) => project.id === draftProjectId)?.remoteServerId;
+      }
+      return s.threads.find((thread) => thread.id === paneId)?.remoteServerId;
+    }
+  }
+  const projectId = selectCurrentProjectId(s);
+  return projectId
+    ? s.projects.find((project) => project.id === projectId)?.remoteServerId
+    : undefined;
+}
+
+export function useCurrentRemoteServerId(): string | undefined {
+  return useAppStore(selectCurrentRemoteServerId);
 }
 
 /** The focused pane's thread id, or null when the view is not a thread view. */

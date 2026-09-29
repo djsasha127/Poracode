@@ -12,7 +12,10 @@ const safeStorageMock = vi.hoisted(() => ({
 
 vi.mock("electron", () => ({ safeStorage: safeStorageMock }));
 
-import { readOrCreateSafeStorageSecretKey } from "./secretStorageKey";
+import {
+  readOrCreateLocalSecretStorageKey,
+  readOrCreateSafeStorageSecretKey,
+} from "./secretStorageKey";
 
 describe("readOrCreateSafeStorageSecretKey", () => {
   let dir: string;
@@ -104,5 +107,45 @@ describe("readOrCreateSafeStorageSecretKey", () => {
       "Unable to encrypt the Poracode secret storage key.",
     );
     expect(() => readFileSync(join(dir, "secret-key.safe"))).toThrow(/ENOENT|no such file/i);
+  });
+});
+
+describe("readOrCreateLocalSecretStorageKey", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "poracode-local-storage-"));
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("persists one stable owner-readable key without touching safeStorage", () => {
+    const first = readOrCreateLocalSecretStorageKey(dir);
+    const second = readOrCreateLocalSecretStorageKey(dir);
+
+    expect(second).toBe(first);
+    expect(Buffer.from(first, "base64")).toHaveLength(32);
+    expect(readFileSync(join(dir, "secret-key.local"), "utf8")).toBe(first);
+    expect(safeStorageMock.encryptString).not.toHaveBeenCalled();
+    expect(safeStorageMock.decryptString).not.toHaveBeenCalled();
+  });
+
+  it("rotates an invalid local key without reading the OS keychain", () => {
+    writeFileSync(join(dir, "secret-key.local"), "invalid");
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const key = readOrCreateLocalSecretStorageKey(dir);
+
+    expect(Buffer.from(key, "base64")).toHaveLength(32);
+    expect(key).not.toBe("invalid");
+    expect(consoleWarn).toHaveBeenCalledWith(
+      "[credential-storage] invalid local signing key; rotating local key.",
+    );
+    expect(safeStorageMock.encryptString).not.toHaveBeenCalled();
+    expect(safeStorageMock.decryptString).not.toHaveBeenCalled();
+    consoleWarn.mockRestore();
   });
 });

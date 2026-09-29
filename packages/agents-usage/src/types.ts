@@ -87,9 +87,42 @@ export const usageTokensSchema = z.object({
   output: z.number().nonnegative().optional(),
   cacheRead: z.number().nonnegative().optional(),
   cacheWrite: z.number().nonnegative().optional(),
+  /** Tokens included in the displayed cost (official or explicitly labeled proxy rate). */
+  priced: z.number().nonnegative().optional(),
+  /** Priced tokens whose subscription-only model required a public proxy rate. */
+  proxyPriced: z.number().nonnegative().optional(),
   period: usageCostPeriodSchema.optional(),
 });
 export type UsageTokens = z.infer<typeof usageTokensSchema>;
+
+/** Token and public-rate totals for one model/reasoning combination in a month. */
+export const usageHistoryModelSchema = z.object({
+  model: z.string(),
+  effort: z.string().optional(),
+  tokens: usageTokensSchema,
+  /** Reasoning/thinking output tokens when the provider reports them separately. */
+  reasoningTokens: z.number().nonnegative().optional(),
+  /** Public API-rate equivalent. Zero means the model has no known public rate. */
+  estimatedCostUsd: z.number().nonnegative(),
+});
+export type UsageHistoryModel = z.infer<typeof usageHistoryModelSchema>;
+
+/** Calendar-month transcript usage, newest month first in the enclosing history. */
+export const usageHistoryMonthSchema = z.object({
+  /** UTC calendar month in YYYY-MM form. */
+  month: z.string().regex(/^\d{4}-\d{2}$/),
+  tokens: usageTokensSchema,
+  reasoningTokens: z.number().nonnegative().optional(),
+  estimatedCostUsd: z.number().nonnegative(),
+  models: z.array(usageHistoryModelSchema),
+});
+export type UsageHistoryMonth = z.infer<typeof usageHistoryMonthSchema>;
+
+/** Historical transcript usage reconstructed from provider-owned session logs. */
+export const usageHistorySchema = z.object({
+  months: z.array(usageHistoryMonthSchema),
+});
+export type UsageHistory = z.infer<typeof usageHistorySchema>;
 
 export const usageCreditsSchema = z.object({
   balance: z.number(),
@@ -126,6 +159,7 @@ export const usageSnapshotSchema = z.object({
   windows: z.array(usageWindowSchema),
   cost: usageCostSchema.optional(),
   tokens: usageTokensSchema.optional(),
+  history: usageHistorySchema.optional(),
   credits: usageCreditsSchema.optional(),
   /** Epoch milliseconds when this snapshot was produced. */
   fetchedAt: z.number().int().nonnegative(),

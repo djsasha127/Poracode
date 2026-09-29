@@ -60,6 +60,8 @@ import { getWindowsSystemCommand } from "./agents/base/shellBasics";
 import { resolveExecutablePath } from "./agents/base/processRuntime";
 import { AgentStatusService, detectWslAgentStatuses } from "./runtime/agentStatusService";
 import { createLocalUsageCollectors } from "./runtime/localUsageCollectors";
+import { createUsageSnapshotEnrichers } from "./agents/usageSnapshotEnrichers";
+import { createUsageHistoryProviders } from "./agents/usageHistoryProviders";
 import { UsageService } from "./runtime/usageService";
 import { setWslCredentialProjectScope } from "./runtime/wslCredentials";
 import { AgentRegistryService } from "./runtime/agentRegistryService";
@@ -534,6 +536,12 @@ export class SupervisorRuntime {
     this.disposeWslCredentialProjectScope = setWslCredentialProjectScope(() =>
       this.hasLiveWslSession(),
     );
+    const usageHistoryProviders = createUsageHistoryProviders({
+      cacheDir: paths.cacheDir,
+      // Source edits are followed immediately by a rescan; read through the
+      // atomic-write watcher race instead of waiting for its invalidation event.
+      readSettings: () => this.sharedSettingsCache.readFresh(),
+    });
     this.usageService = new UsageService({
       emit,
       cachePath: join(paths.cacheDir, "provider-usage.json"),
@@ -542,6 +550,8 @@ export class SupervisorRuntime {
       localCollectors: createLocalUsageCollectors({
         getActiveAntigravityWslDistros: () => this.getActiveAntigravityWslDistros(),
       }),
+      usageSnapshotEnrichers: createUsageSnapshotEnrichers(),
+      usageHistoryProviders,
     });
     this.usageService.startAutoRefresh();
 
@@ -682,7 +692,7 @@ export class SupervisorRuntime {
   }
 
   async getCrossagentSpawnableAgents(contextTags: readonly string[] = []) {
-    const { windows } = await this.agentStatusService.getAgentStatuses({ wslDistros: [] });
+    const { windows } = await this.agentStatusService.getAgentStatusesReady({ wslDistros: [] });
     const settings: CrossagentVisibilitySettings = this.sharedSettingsCache.read();
     return buildSpawnableAgents(this.adapters, windows, settings, contextTags);
   }

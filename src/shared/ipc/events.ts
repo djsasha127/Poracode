@@ -110,7 +110,11 @@ export type SupervisorEvent =
        * predating the field, which leaves the client's cached value alone.
        */
       threadMentionToolsAvailable?: boolean;
-      sessionRef?: { providerSessionId: string; discoveredAt: string };
+      sessionRef?: {
+        providerSessionId: string;
+        discoveredAt: string;
+        providerCursor?: string | undefined;
+      };
       canResumeWithConfig: boolean;
       errorMessage?: string;
       slashCommands?: AgentSlashCommand[];
@@ -202,6 +206,12 @@ export type ProjectStateChangedEvent = {
   projects: Project[];
   /** Optional repair data; ordinary project broadcasts retain the existing shape. */
   recoveredThreads?: Thread[];
+};
+
+/** Full local metadata snapshot after another desktop process writes the shared database. */
+export type DatabaseStateChangedEvent = {
+  projects: Project[];
+  threads: Thread[];
 };
 
 /** Successful desktop PR automation merge; consumed once by the runtime-owner renderer. */

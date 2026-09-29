@@ -100,6 +100,56 @@ describe("pushDesktopSettingsDiff push ordering", () => {
     });
   });
 
+  it("does not push usage defaults to a legacy helper that omitted the capability", () => {
+    applyDesktopSettings(settings("v0"));
+    const updateSettings = vi.fn<(patch: RemoteSettingsPatch) => Promise<RemoteSettings>>();
+    const client = { updateSettings } as unknown as RemoteDesktopClient;
+
+    pushDesktopSettingsDiff(client, {
+      ...input("v0"),
+      usage: {
+        autoRefresh: true,
+        refreshIntervalMinutes: 5,
+        providerRefreshIntervals: {},
+        showEstimatedCost: true,
+        showInSidebar: true,
+        sidebarHiddenProviders: [],
+        disabledProviders: [],
+        providerOrder: [],
+        collapsedProviders: [],
+        selectedRingGroups: {},
+        historySources: {},
+      },
+    } as SharedSettingsInput);
+
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps host usage collection out of device-local PWA settings", () => {
+    const remote = {
+      ...settings("v0"),
+      usage: {
+        autoRefresh: true,
+        refreshIntervalMinutes: 5,
+        providerRefreshIntervals: {},
+        showEstimatedCost: true,
+        showInSidebar: true,
+        sidebarHiddenProviders: [],
+        disabledProviders: [],
+        providerOrder: [],
+        collapsedProviders: [],
+        selectedRingGroups: {},
+        historySources: {
+          codex: [{ id: "ext", name: "EXT", path: "/archive", enabled: true }],
+        },
+      },
+    } as RemoteSettings;
+
+    applyDesktopSettings(remote);
+
+    expect(h.applyExternalSharedSettings).toHaveBeenCalledWith({ titleGenProvider: "v0" });
+  });
+
   it("an older push's failure does not discard a newer push's committed value", async () => {
     applyDesktopSettings(settings("v0"));
 

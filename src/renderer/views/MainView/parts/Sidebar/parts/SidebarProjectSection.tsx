@@ -25,7 +25,6 @@ export function SidebarProjectSection(props: {
     accept: "project",
     group: "projects",
     data: { type: "project", projectId: props.projectId } satisfies DragSourceData,
-    disabled: project?.remoteServerId !== undefined,
   });
   const isDragging = useIsDraggingProject(props.projectId);
 
@@ -43,7 +42,9 @@ export function SidebarProjectSection(props: {
         isDragging={isDragging}
         isUnreachable={isUnreachable}
       />
-      {showBody ? <SidebarProjectThreadList project={project} sortMode={props.sortMode} /> : null}
+      {showBody ? (
+        <SidebarProjectThreadList project={project} sortMode={props.sortMode} excludeStarred />
+      ) : null}
     </section>
   );
 }

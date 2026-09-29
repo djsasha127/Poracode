@@ -1,6 +1,7 @@
 import { Suspense, type ReactNode, useEffect, useRef } from "react";
 import { useDroppable } from "@dnd-kit/react";
 import { getAppName } from "@/shared/appName";
+import { resolvePoracodeBuildLabel } from "@/shared/buildLabel";
 import { readBridge } from "@/renderer/bridge";
 import { PageLayout } from "@/renderer/components/layout/PageLayout";
 import { BrandWordmark } from "@/renderer/components/common/BrandWordmark";
@@ -22,11 +23,12 @@ export function MainPageLayout(props: { onTitleClick: () => void }) {
   const { onTitleClick } = props;
   const channel = readBridge().channel;
   const isDev = import.meta.env.DEV;
+  const buildLabel = resolvePoracodeBuildLabel();
   // Keep the dev / nightly tag beside the brand wordmark (the old text header
   // rendered it inline as "(DEV)" / "Nightly").
-  const channelSuffix = [channel === "nightly" ? "Nightly" : "", isDev ? "(dev)" : ""]
+  const channelSuffix = [channel === "nightly" ? "Nightly" : "", buildLabel, isDev ? "(dev)" : ""]
     .filter(Boolean)
-    .join(" ");
+    .join(" · ");
 
   return (
     <PageLayout

@@ -56,6 +56,7 @@ import {
 } from "./requestMapping";
 import { mintMspCommandId } from "./uuidv7";
 import { isMuseCompactCommand } from "./localCommands";
+import { buildMuseSessionConfig } from "./mcpServers";
 import { buildMuseTurnInput } from "./turnInput";
 import { msg } from "@/shared/messages";
 import { isFullBypassApprovalPolicy } from "@/shared/agents/unrestrictedPermissions";
@@ -70,6 +71,21 @@ const COMPACT_ITEM_TIMEOUT_MS = 30_000;
 
 /** Best-effort budget for the optional `model/list` provider lookup at launch. */
 const MSP_PROVIDER_LOOKUP_TIMEOUT_MS = 10_000;
+
+/** Maximum number of durable view events requested in one MSP gap-fill page. */
+const MSP_VIEW_PAGE_LIMIT = 1_000;
+const MSP_PENDING_REQUEST_RECONCILE_INTERVAL_MS = 2_000;
+
+interface BufferedMuseNotification {
+  method: string;
+  params: Record<string, unknown>;
+}
+
+interface MuseViewGapRecovery {
+  readonly nextCursor: string;
+  readonly includeNextCursor?: boolean;
+  readonly buffered: BufferedMuseNotification[];
+}
 
 const NOOP_LISTENER: StructuredSessionListener = {
   onClose() {},
@@ -93,6 +109,54 @@ function numberValue(value: unknown): number | undefined {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isStaleMuseApprovalError(error: unknown): boolean {
+  return /approval\s+\S+\s+requirement is stale/i.test(errorMessage(error));
+}
+
+function isUnusableMuseResumeSession(error: unknown): boolean {
+  const message = errorMessage(error);
+  const malformedHistory =
+    /classify turns/i.test(message) &&
+    /session fork rejected/i.test(message) &&
+    /MalformedJsonl/i.test(message);
+  const alreadyInUse = /session\s+\S+\s+is already in use/i.test(message);
+  const staleMaterializedView =
+    /read materialized session view/i.test(message) && /stale sidecar generation/i.test(message);
+  return malformedHistory || alreadyInUse || staleMaterializedView;
+}
+
+function isMuseSessionNotLoadedError(error: unknown): boolean {
+  return /session\s+\S+\s+is not loaded on this host/i.test(errorMessage(error));
+}
+
+function isMuseApprovalModeCeilingError(error: unknown): boolean {
+  return (
+    (error instanceof MspRpcError && error.data?.["reason"] === "approval_mode_ceiling") ||
+    /approval mode exceeds or is incomparable with the sealed startup mode/i.test(
+      errorMessage(error),
+    )
+  );
+}
+
+function isMuseDuplicateFunctionOutputHistoryError(error: unknown): boolean {
+  return (
+    /duplicate function_call_output for call_id/i.test(errorMessage(error)) &&
+    /each function_call must have exactly one matching function_call_output/i.test(
+      errorMessage(error),
+    )
+  );
+}
+
+interface RecoverableMuseTurn {
+  turnId: string;
+  commandId: string;
+  prompt: string;
+  config: ThreadConfig;
+  segments?: PromptSegment[];
+  options?: StartTurnOptions;
+  recoveryAttempt: number;
 }
 
 function turnState(value: unknown): "completed" | "failed" | "cancelled" {
@@ -142,18 +206,31 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
   private readonly emittedTurnIds = new Set<string>();
   private readonly completedTurnIds = new Set<string>();
   private readonly ownedSessionIds = new Set<string>();
+  private readonly autoApprovalsInFlight = new Set<string>();
+  private readonly queuedAutoApprovalUpdates = new Map<string, Record<string, unknown>>();
   private bufferedEvents: RuntimeEvent[] = [];
   private currentConfig: ThreadConfig;
+  private desiredApprovalPolicy: ThreadConfig["approvalPolicy"];
   private sessionId: string | undefined;
+  private sessionDiscoveredAt: string | undefined;
   private activeTurnId: string | undefined;
   private pendingTurnStart: Promise<void> | undefined;
+  private resumeAfterUnloadInFlight: Promise<void> | undefined;
+  private historyRecoveryInFlight: Promise<void> | undefined;
+  private recoverableTurn: RecoverableMuseTurn | undefined;
   private status: "idle" | "working" | "needs_approval" | "needs_reply" | "error" = "idle";
   private attention: "none" | "working" | "needs_approval" | "needs_reply" = "none";
   private activated = false;
+  private sessionMcpGranted = false;
   private disposed = false;
   private transportErrorReported = false;
   private transportCloseReported = false;
   private pendingCompact: { turnId: string; timer: NodeJS.Timeout } | undefined;
+  private viewGapRecovery: MuseViewGapRecovery | undefined;
+  private pendingRequestReconcileTimer: NodeJS.Timeout | undefined;
+  private pendingRequestReconcileInFlight = false;
+  private lastViewCursor: string | undefined;
+  private viewTailReconcileInFlight = false;
   private usageEpoch = 0;
   private usageScopeFresh = false;
   private constructor(
@@ -167,6 +244,7 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
       ...(input.agentSettings ? { agentSettings: input.agentSettings } : {}),
     };
     this.currentConfig = input.config;
+    this.desiredApprovalPolicy = input.config.approvalPolicy;
     this.mapper = createMuseMspItemMapperState(input.threadId);
     this.planAggregator = createPlanAggregator(input.threadId, "muse-plan");
     client.onNotification((method, params) => this.handleNotification(method, params));
@@ -210,40 +288,64 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
 
   async activate(): Promise<void> {
     if (this.disposed) throw new Error("Muse MSP session was disposed before activation.");
-    const result = await this.client.initialize("poracode", "1.0.0");
+    const requestedCapabilities = this.input.mcpServers?.length ? ["sessionMcp"] : [];
+    const result = await this.client.initialize("poracode", "1.0.0", requestedCapabilities);
     if (result.schema.version !== MSP_SCHEMA_VERSION) {
       throw new Error(
         `Muse MSP schema version ${result.schema.version} is incompatible with supported version ${MSP_SCHEMA_VERSION}.`,
       );
     }
+    this.sessionMcpGranted = result.grantedCapabilities.includes("sessionMcp");
     this.activated = true;
   }
 
   async openThread(config: ThreadConfig, sessionRef = this.input.sessionRef): Promise<string> {
     if (!this.activated) throw new Error("Muse MSP session is not initialized.");
     this.currentConfig = config;
+    this.desiredApprovalPolicy = config.approvalPolicy;
     const resumeId = sessionRef?.providerSessionId;
-    const result = resumeId
-      ? await this.client.request("session/resume", {
-          commandId: mintMspCommandId(),
-          sessionId: resumeId,
-          excludeItems: true,
-        })
-      : await this.client.request("session/start", {
-          commandId: mintMspCommandId(),
-          workspaceRoot: workspaceRoot(this.input),
-          modelId: config.model,
-          ...(await this.resolveModelProviderId(config.model)),
-          approvalMode: toMspApprovalMode(config.approvalPolicy),
-        });
+    const resumeCursor = sessionRef?.providerCursor;
+    const sessionConfig = this.sessionMcpGranted
+      ? buildMuseSessionConfig(this.input.mcpServers)
+      : undefined;
+    let resumed = Boolean(resumeId);
+    let replacedUnusableSession = false;
+    let result: Record<string, unknown>;
+    try {
+      result = resumeId
+        ? await this.client.request("session/resume", {
+            commandId: mintMspCommandId(),
+            sessionId: resumeId,
+            excludeItems: true,
+            ...(sessionConfig ? { config: sessionConfig } : {}),
+          })
+        : await this.startFreshSession(config, sessionConfig);
+    } catch (error) {
+      if (!resumeId || !isUnusableMuseResumeSession(error)) throw error;
+      // Muse can reject a provider session because its internal history fork
+      // is malformed or because another live client still owns that session.
+      // Preserve the Poracode thread and rendered history, but rotate only the
+      // unavailable provider session so the same dialogue accepts new turns.
+      resumed = false;
+      replacedUnusableSession = true;
+      result = await this.startFreshSession(config, sessionConfig);
+    }
     const session = recordOf(result["session"]);
     const sessionId = stringValue(session?.["sessionId"]);
     if (!sessionId) throw new Error("Muse MSP did not return a session id.");
     this.sessionId = sessionId;
+    this.sessionDiscoveredAt = resumed
+      ? (sessionRef?.discoveredAt ?? new Date().toISOString())
+      : new Date().toISOString();
+    const resumedViewHead = await this.resolveCurrentViewHead(
+      sessionId,
+      stringValue(result["viewCursor"]),
+    );
+    this.lastViewCursor = resumeCursor ?? resumedViewHead;
     this.ownedSessionIds.add(sessionId);
-    this.usageScopeFresh = !resumeId;
+    this.usageScopeFresh = !resumed;
     this.activeTurnId = stringValue(session?.["activeTurnId"]);
-    if (resumeId) {
+    if (resumed) {
       const approvalMode = recordOf(session?.["approvalMode"]);
       this.currentConfig = {
         ...config,
@@ -251,9 +353,31 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
         approvalPolicy: approvalPolicyFromMspMode(approvalMode?.["mode"], config.approvalPolicy),
       };
       await this.applyConfig(config);
+      if (resumeCursor && resumedViewHead && resumeCursor !== resumedViewHead) {
+        const recovery: MuseViewGapRecovery = {
+          nextCursor: resumedViewHead,
+          includeNextCursor: true,
+          buffered: [],
+        };
+        this.viewGapRecovery = recovery;
+        try {
+          await this.fillViewGap(sessionId, resumeCursor, recovery);
+          this.finishViewGapRecovery(recovery);
+        } catch (error) {
+          this.failViewGapRecovery(recovery, error);
+        }
+      }
     }
     this.refreshWorkingState();
     this.emit({ type: "session.started", threadId: this.input.threadId });
+    if (replacedUnusableSession) {
+      this.emit({
+        type: "warning",
+        threadId: this.input.threadId,
+        message:
+          "Muse could not reopen its previous provider session. Poracode kept this dialogue and started a fresh Muse runtime for subsequent messages.",
+      });
+    }
     if (session && "goal" in session && session["goal"]) {
       this.emitMany(mapMuseMspGoalChanged(this.mapper, { goal: session["goal"] }));
     }
@@ -262,6 +386,7 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
     }
     if (this.activeTurnId) this.emitTurnStarted(this.activeTurnId);
     this.publishUpdate();
+    this.startPendingRequestReconciliation();
     return sessionId;
   }
 
@@ -285,10 +410,11 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
     config: ThreadConfig,
     segments?: PromptSegment[],
     options?: StartTurnOptions,
+    recoveryAttempt = 0,
   ): Promise<void> {
     const sessionId = this.requireSessionId();
-    await this.applyConfig(config);
     if (isMuseCompactCommand(prompt)) {
+      await this.withLoadedSessionRetry(sessionId, () => this.applyConfig(config));
       await this.compactSession(sessionId);
       return;
     }
@@ -298,22 +424,96 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
     this.attention = "working";
     this.publishUpdate();
     try {
-      const result = await this.client.request("turn/start", {
-        commandId,
-        sessionId,
-        input: await buildMuseTurnInput(prompt, options?.inlineInstructions),
-        displayText: prompt,
-        ...(config.effort ? { reasoningEffort: config.effort } : {}),
-      });
+      await this.withLoadedSessionRetry(sessionId, () => this.applyConfig(config));
+      const input = await buildMuseTurnInput(prompt, options?.inlineInstructions);
+      const result = await this.withLoadedSessionRetry(sessionId, () =>
+        this.client.request("turn/start", {
+          commandId,
+          sessionId,
+          input,
+          displayText: prompt,
+          ...(config.effort ? { reasoningEffort: config.effort } : {}),
+        }),
+      );
       const turnId = stringValue(result["turnId"]) ?? commandId;
+      this.recoverableTurn = {
+        turnId,
+        commandId,
+        prompt,
+        config,
+        ...(segments ? { segments } : {}),
+        ...(options ? { options } : {}),
+        recoveryAttempt,
+      };
       if (result["disposition"] === "started" && !this.completedTurnIds.has(turnId)) {
         this.activeTurnId = turnId;
         this.emitTurnStarted(turnId);
       }
     } catch (error) {
       this.pendingUserItems.delete(commandId);
-      this.failTurn(commandId, errorMessage(error));
+      // Recovery owns the original lifecycle: its failed provider turn was
+      // deliberately suppressed while we rotated the corrupted session. Let
+      // the recovery boundary settle that turn once, instead of emitting a
+      // second synthetic failed turn for this replacement command id.
+      if (recoveryAttempt === 0) this.failTurn(commandId, errorMessage(error));
       throw error;
+    }
+  }
+
+  /**
+   * Muse unloads an idle session after its host retention window while keeping
+   * the stdio server alive. The next session-bound request then fails with
+   * `not loaded on this host`. Reattach the same durable session and retry the
+   * exact operation once; command ids are minted outside this helper so the
+   * retry remains idempotent.
+   */
+  private async withLoadedSessionRetry<T>(
+    sessionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isMuseSessionNotLoadedError(error)) throw error;
+      await this.resumeSessionAfterUnload(sessionId);
+      return operation();
+    }
+  }
+
+  private async resumeSessionAfterUnload(sessionId: string): Promise<void> {
+    if (this.resumeAfterUnloadInFlight) return this.resumeAfterUnloadInFlight;
+    const resume = (async () => {
+      const sessionConfig = this.sessionMcpGranted
+        ? buildMuseSessionConfig(this.input.mcpServers)
+        : undefined;
+      const result = await this.client.request("session/resume", {
+        commandId: mintMspCommandId(),
+        sessionId,
+        excludeItems: true,
+        ...(sessionConfig ? { config: sessionConfig } : {}),
+      });
+      const session = recordOf(result["session"]);
+      const resumedId = stringValue(session?.["sessionId"]);
+      if (resumedId && resumedId !== sessionId) {
+        throw new Error(`Muse resumed unexpected session ${resumedId}; expected ${sessionId}.`);
+      }
+      this.sessionId = sessionId;
+      this.ownedSessionIds.add(sessionId);
+      this.activeTurnId = stringValue(session?.["activeTurnId"]);
+      const head = await this.resolveCurrentViewHead(sessionId, stringValue(result["viewCursor"]));
+      // The renderer already owns the durable transcript. Rebase its provider
+      // cursor to the reattached host head instead of replaying idle-retention
+      // housekeeping as a wall of stale tool activity.
+      if (head) this.lastViewCursor = head;
+      this.refreshWorkingState();
+      this.publishUpdate();
+      this.startPendingRequestReconciliation();
+    })();
+    this.resumeAfterUnloadInFlight = resume;
+    try {
+      await resume;
+    } finally {
+      if (this.resumeAfterUnloadInFlight === resume) this.resumeAfterUnloadInFlight = undefined;
     }
   }
 
@@ -342,7 +542,9 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
     this.emitTurnStarted(commandId);
     this.publishUpdate();
     try {
-      const result = await this.client.request("session/compact", { commandId, sessionId });
+      const result = await this.withLoadedSessionRetry(sessionId, () =>
+        this.client.request("session/compact", { commandId, sessionId }),
+      );
       if (result["status"] === "noop") {
         this.emit({
           type: "warning",
@@ -486,7 +688,16 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
     const pending = this.pendingRequests.get(id);
     if (!pending) throw new Error(`Muse MSP request ${id} is no longer pending.`);
     if (pending.kind === "approval") {
-      await this.resolveApproval(pending, response);
+      try {
+        await this.resolveApproval(pending, response);
+      } catch (error) {
+        // A multi-stage approval can advance between rendering and the user's
+        // click. Treat the old requirement as superseded, close its card, and
+        // immediately pull the authoritative current stage from Muse.
+        if (!isStaleMuseApprovalError(error)) throw error;
+        this.resolveRequestFromNotification(id, "cancelled");
+        await this.reconcilePendingRequests();
+      }
       return;
     }
     await this.resolveUserInput(pending, response);
@@ -496,6 +707,7 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
     if (this.disposed) return;
     this.disposed = true;
     this.clearPendingCompact();
+    this.stopPendingRequestReconciliation();
     this.emitMany(closePlanAggregator(this.planAggregator));
     for (const requestId of this.pendingRequests.keys()) {
       this.emit({
@@ -565,8 +777,45 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
     );
   }
 
+  /**
+   * Enterprise/local Muse policy can seal a host to `promptUnmatched` even
+   * when the Poracode thread asks for `onRequest` or bypass. Muse rejects the
+   * whole session with `approval_mode_ceiling` in that case. Retry once with
+   * its strictest mode: Poracode still owns the user's desired policy — bypass
+   * threads auto-decide the resulting approvals, while ordinary threads keep
+   * surfacing them — so Crossagents remains usable without weakening safety.
+   */
+  private async startFreshSession(
+    config: ThreadConfig,
+    sessionConfig: ReturnType<typeof buildMuseSessionConfig>,
+  ): Promise<Record<string, unknown>> {
+    const provider = await this.resolveModelProviderId(config.model);
+    const start = (approvalMode: ReturnType<typeof toMspApprovalMode>) =>
+      this.client.request("session/start", {
+        commandId: mintMspCommandId(),
+        workspaceRoot: workspaceRoot(this.input),
+        modelId: config.model,
+        ...provider,
+        approvalMode,
+        ...(sessionConfig ? { config: sessionConfig } : {}),
+      });
+    const requestedMode = toMspApprovalMode(config.approvalPolicy);
+    try {
+      return await start(requestedMode);
+    } catch (error) {
+      if (requestedMode === "promptUnmatched" || !isMuseApprovalModeCeilingError(error)) {
+        throw error;
+      }
+      return start("promptUnmatched");
+    }
+  }
+
   private async applyConfig(config: ThreadConfig): Promise<void> {
     const sessionId = this.requireSessionId();
+    // Keep the UI-selected policy separate from provider echoes. A resumed
+    // Muse session can publish its old approval mode after reconciliation;
+    // that stale echo must not silently disable Poracode's bypass behavior.
+    this.desiredApprovalPolicy = config.approvalPolicy;
     if (config.model !== this.currentConfig.model) {
       const catalog = parseMspModelListResult(
         await this.client.request("model/list", { sessionId }),
@@ -583,11 +832,21 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
       });
     }
     if (config.approvalPolicy !== this.currentConfig.approvalPolicy) {
-      await this.client.request("session/setApprovalMode", {
-        commandId: mintMspCommandId(),
-        sessionId,
-        mode: toMspApprovalMode(config.approvalPolicy),
-      });
+      const requestedMode = toMspApprovalMode(config.approvalPolicy);
+      const setMode = (mode: ReturnType<typeof toMspApprovalMode>) =>
+        this.client.request("session/setApprovalMode", {
+          commandId: mintMspCommandId(),
+          sessionId,
+          mode,
+        });
+      try {
+        await setMode(requestedMode);
+      } catch (error) {
+        if (requestedMode === "promptUnmatched" || !isMuseApprovalModeCeilingError(error)) {
+          throw error;
+        }
+        await setMode("promptUnmatched");
+      }
     }
     this.currentConfig = config;
     this.publishUpdate();
@@ -595,10 +854,40 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
 
   private handleNotification(method: string, params: Record<string, unknown>): void {
     if (this.disposed || (this.sessionId && params["sessionId"] !== this.sessionId)) return;
+    if (method === "view/gap") {
+      if (this.viewGapRecovery) {
+        this.viewGapRecovery.buffered.push({ method, params });
+      } else {
+        this.startViewGapRecovery(params);
+      }
+      return;
+    }
+    if (this.viewGapRecovery) {
+      this.viewGapRecovery.buffered.push({ method, params });
+      return;
+    }
+    this.applyNotification(method, params);
+  }
+
+  private applyNotification(
+    method: string,
+    params: Record<string, unknown>,
+    options?: { replayed?: boolean },
+  ): void {
+    const previousCursor = this.lastViewCursor;
+    this.lastViewCursor = stringValue(params["viewCursor"]) ?? this.lastViewCursor;
+    const cursorChanged = this.lastViewCursor !== previousCursor;
     switch (method) {
       case "turn/started": {
         const turnId = stringValue(params["turnId"]);
         if (!turnId) return;
+        // A forward page can contain an older completed turn before the live
+        // turn we are recovering. Keep its canonical lifecycle event, but do
+        // not let historical replay replace the host-confirmed active turn.
+        if (options?.replayed && this.activeTurnId && this.activeTurnId !== turnId) {
+          this.emitTurnStarted(turnId);
+          return;
+        }
         this.activeTurnId = turnId;
         this.status = "working";
         this.attention = "working";
@@ -610,12 +899,31 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
         const turnId = stringValue(params["turnId"]);
         if (!turnId) return;
         const state = turnState(params["terminal"]);
-        if (state === "failed") {
+        const settlesLiveTurn =
+          !options?.replayed || (this.activeTurnId !== undefined && this.activeTurnId === turnId);
+        if (state === "failed" && settlesLiveTurn) {
           const error = recordOf(params["error"]);
           const message = stringValue(error?.["message"]) ?? stringValue(params["reason"]);
+          const recoverable = this.recoverableTurn;
+          if (
+            message &&
+            recoverable?.turnId === turnId &&
+            recoverable.recoveryAttempt === 0 &&
+            !this.historyRecoveryInFlight &&
+            isMuseDuplicateFunctionOutputHistoryError(message)
+          ) {
+            this.completedTurnIds.add(turnId);
+            this.emitMany(completeOpenMuseMspItems(this.mapper));
+            this.historyRecoveryInFlight = this.recoverDuplicateFunctionOutput(
+              recoverable,
+              message,
+            );
+            return;
+          }
           if (message) this.emit({ type: "error", threadId: this.input.threadId, message });
         }
-        this.completeTurn(turnId, state);
+        if (this.recoverableTurn?.turnId === turnId) this.recoverableTurn = undefined;
+        this.completeTurn(turnId, state, { preserveSessionState: !settlesLiveTurn });
         return;
       }
       case "item/started":
@@ -640,6 +948,7 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
               : "completed";
         this.emitMany(mapMuseMspItem(this.mapper, item as MuseMspItem, phase));
         if (stringValue(item["kind"]) === "compaction") this.settleCompactItem(item, phase);
+        if (cursorChanged) this.publishUpdate();
         return;
       }
       case "item/delta":
@@ -687,6 +996,17 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
         return;
       }
       case "session/approvalModeChanged":
+        if (
+          isFullBypassApprovalPolicy(this.desiredApprovalPolicy) &&
+          params["mode"] !== "allowAll"
+        ) {
+          this.currentConfig = {
+            ...this.currentConfig,
+            approvalPolicy: this.desiredApprovalPolicy,
+          };
+          this.publishUpdate();
+          return;
+        }
         this.currentConfig = {
           ...this.currentConfig,
           approvalPolicy: approvalPolicyFromMspMode(
@@ -701,6 +1021,148 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
         return;
       case "session/todoListChanged": {
         this.applyTodoListChanged(params);
+        return;
+      }
+    }
+  }
+
+  /**
+   * Muse can persist a compaction checkpoint whose projected history contains
+   * the same tool result twice. Every later model request then fails before it
+   * can do new work. Keep Poracode's transcript, rotate only the corrupted Muse
+   * provider session, and retry the user's current message once.
+   */
+  private async recoverDuplicateFunctionOutput(
+    turn: RecoverableMuseTurn,
+    originalError: string,
+  ): Promise<void> {
+    try {
+      this.pendingUserItems.delete(turn.commandId);
+      this.recoverableTurn = undefined;
+      this.activeTurnId = undefined;
+      this.status = "working";
+      this.attention = "working";
+      const sessionConfig = this.sessionMcpGranted
+        ? buildMuseSessionConfig(this.input.mcpServers)
+        : undefined;
+      const result = await this.startFreshSession(turn.config, sessionConfig);
+      const session = recordOf(result["session"]);
+      const sessionId = stringValue(session?.["sessionId"]);
+      if (!sessionId) throw new Error("Muse MSP did not return a replacement session id.");
+      this.sessionId = sessionId;
+      this.sessionDiscoveredAt = new Date().toISOString();
+      this.lastViewCursor = await this.resolveCurrentViewHead(
+        sessionId,
+        stringValue(result["viewCursor"]),
+      );
+      this.ownedSessionIds.add(sessionId);
+      this.currentConfig = turn.config;
+      this.desiredApprovalPolicy = turn.config.approvalPolicy;
+      this.usageEpoch += 1;
+      this.usageScopeFresh = true;
+      this.publishUpdate();
+      await this.startTurnRequest(
+        turn.prompt,
+        turn.config,
+        turn.segments,
+        turn.options,
+        turn.recoveryAttempt + 1,
+      );
+    } catch {
+      this.recoverableTurn = undefined;
+      this.emit({ type: "error", threadId: this.input.threadId, message: originalError });
+      this.completedTurnIds.delete(turn.turnId);
+      this.completeTurn(turn.turnId, "failed");
+    } finally {
+      this.historyRecoveryInFlight = undefined;
+    }
+  }
+
+  /**
+   * MSP push delivery is explicitly lossy under backpressure. `view/gap`
+   * brackets the missing durable events, and `view/page` is the protocol's
+   * sanctioned splice-fill path. Keep subsequent live notifications buffered
+   * until the missing range has been replayed so an assistant message and its
+   * terminal event cannot arrive out of order or leave the GUI stuck working.
+   */
+  private startViewGapRecovery(params: Record<string, unknown>): void {
+    const sessionId = stringValue(params["sessionId"]);
+    const afterCursor = stringValue(params["after"]);
+    const nextCursor = stringValue(params["next"]);
+    if (!sessionId || !afterCursor || !nextCursor || sessionId !== this.sessionId) return;
+
+    const recovery: MuseViewGapRecovery = { nextCursor, buffered: [] };
+    this.viewGapRecovery = recovery;
+    void this.fillViewGap(sessionId, afterCursor, recovery)
+      .then(() => this.finishViewGapRecovery(recovery))
+      .catch((error) => this.failViewGapRecovery(recovery, error));
+  }
+
+  private async fillViewGap(
+    sessionId: string,
+    afterCursor: string,
+    recovery: MuseViewGapRecovery,
+  ): Promise<void> {
+    let cursor = afterCursor;
+    for (;;) {
+      const result = await this.client.request("view/page", {
+        sessionId,
+        cursor,
+        direction: "forward",
+        limit: MSP_VIEW_PAGE_LIMIT,
+      });
+      const events = Array.isArray(result["events"]) ? result["events"] : [];
+      for (const rawEvent of events) {
+        const event = recordOf(rawEvent);
+        const method = stringValue(event?.["method"]);
+        const eventParams = recordOf(event?.["params"]);
+        if (!method || !eventParams) continue;
+        if (stringValue(eventParams["viewCursor"]) === recovery.nextCursor) {
+          if (recovery.includeNextCursor) {
+            this.applyNotification(method, eventParams, { replayed: true });
+          }
+          return;
+        }
+        this.applyNotification(method, eventParams, { replayed: true });
+      }
+
+      const nextPageCursor = stringValue(result["nextCursor"]);
+      if (!nextPageCursor) {
+        throw new Error("Muse MSP view gap could not be filled to its upper cursor.");
+      }
+      if (nextPageCursor === cursor) {
+        throw new Error("Muse MSP view gap paging did not advance.");
+      }
+      cursor = nextPageCursor;
+    }
+  }
+
+  private finishViewGapRecovery(recovery: MuseViewGapRecovery): void {
+    if (this.disposed || this.viewGapRecovery !== recovery) return;
+    this.viewGapRecovery = undefined;
+    this.drainBufferedNotifications(recovery.buffered);
+  }
+
+  private failViewGapRecovery(recovery: MuseViewGapRecovery, error: unknown): void {
+    if (this.disposed || this.viewGapRecovery !== recovery) return;
+    this.viewGapRecovery = undefined;
+    this.emit({
+      type: "error",
+      threadId: this.input.threadId,
+      message: `Muse MSP history recovery failed: ${errorMessage(error)}`,
+    });
+    this.status = "error";
+    this.attention = "none";
+    this.publishUpdate();
+    this.drainBufferedNotifications(recovery.buffered);
+  }
+
+  private drainBufferedNotifications(notifications: readonly BufferedMuseNotification[]): void {
+    for (let index = 0; index < notifications.length; index += 1) {
+      const notification = notifications[index]!;
+      this.handleNotification(notification.method, notification.params);
+      if (this.viewGapRecovery) {
+        this.viewGapRecovery.buffered.push(...notifications.slice(index + 1));
         return;
       }
     }
@@ -755,12 +1217,17 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
     this.emit({ type: "turn.started", threadId: this.input.threadId, turnId });
   }
 
-  private completeTurn(turnId: string, state: "completed" | "failed" | "cancelled"): void {
+  private completeTurn(
+    turnId: string,
+    state: "completed" | "failed" | "cancelled",
+    options?: { preserveSessionState?: boolean },
+  ): void {
     if (this.completedTurnIds.has(turnId)) return;
     this.completedTurnIds.add(turnId);
     this.emitTurnStarted(turnId);
     this.emitMany(completeOpenMuseMspItems(this.mapper));
     this.emit({ type: "turn.completed", threadId: this.input.threadId, turnId, state });
+    if (options?.preserveSessionState) return;
     if (this.activeTurnId === turnId) this.activeTurnId = undefined;
     this.status = state === "failed" ? "error" : "idle";
     this.attention = "none";
@@ -772,7 +1239,7 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
     this.completeTurn(turnId, "failed");
   }
 
-  private openApproval(params: Record<string, unknown>): void {
+  private openApproval(params: Record<string, unknown>, allowAutoApprove = true): void {
     const approvalId = stringValue(params["approvalId"]);
     const requirementId = recordOf(params["currentRequirementId"]);
     const choices = Array.isArray(params["availableChoices"])
@@ -787,10 +1254,18 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
     // with an empty `stages` list). `muse serve` has no `--disable-approval`
     // switch, so under a full-bypass policy the only way to honour "never ask"
     // is to decide on the user's behalf. Ask-style policies are untouched.
-    if (isFullBypassApprovalPolicy(this.currentConfig.approvalPolicy)) {
+    if (this.autoApprovalsInFlight.has(approvalId)) {
+      // Muse may publish the next requirement before the previous decide RPC
+      // settles. Preserve that update so bypass mode can continue through the
+      // full pipeline instead of retaining a stale requirement forever.
+      this.queuedAutoApprovalUpdates.set(approvalId, params);
+      return;
+    }
+    if (allowAutoApprove && isFullBypassApprovalPolicy(this.desiredApprovalPolicy)) {
       const autoChoiceId = autoApproveChoiceId(choices);
       if (autoChoiceId) {
-        this.autoDecideApproval(approvalId, requirementId, autoChoiceId);
+        this.autoApprovalsInFlight.add(approvalId);
+        this.autoDecideApproval(approvalId, requirementId, autoChoiceId, params);
         return;
       }
     }
@@ -822,6 +1297,137 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
   }
 
   /**
+   * MSP push delivery can omit an approval/request while the durable session
+   * still waits for it. Reconcile against the protocol's authoritative pull
+   * view so a missed push cannot leave an active turn stuck forever.
+   */
+  private startPendingRequestReconciliation(): void {
+    if (this.pendingRequestReconcileTimer || this.disposed) return;
+    void this.reconcilePendingRequests();
+    void this.reconcileViewTail();
+    this.pendingRequestReconcileTimer = setInterval(() => {
+      void this.reconcilePendingRequests();
+      void this.reconcileViewTail();
+    }, MSP_PENDING_REQUEST_RECONCILE_INTERVAL_MS);
+    this.pendingRequestReconcileTimer.unref?.();
+  }
+
+  private stopPendingRequestReconciliation(): void {
+    if (!this.pendingRequestReconcileTimer) return;
+    clearInterval(this.pendingRequestReconcileTimer);
+    this.pendingRequestReconcileTimer = undefined;
+  }
+
+  private async reconcilePendingRequests(): Promise<void> {
+    if (this.disposed || !this.sessionId || this.pendingRequestReconcileInFlight) return;
+    this.pendingRequestReconcileInFlight = true;
+    try {
+      const result = await this.client.request("approval/listPending", {
+        sessionId: this.sessionId,
+      });
+      const approvals = Array.isArray(result["approvals"]) ? result["approvals"] : [];
+      for (const rawApproval of approvals) {
+        const approval = recordOf(rawApproval);
+        if (approval) this.openApproval(approval);
+      }
+      const userInputs = Array.isArray(result["userInputs"]) ? result["userInputs"] : [];
+      for (const rawUserInput of userInputs) {
+        const userInput = recordOf(rawUserInput);
+        if (userInput) this.openUserInput(userInput);
+      }
+    } catch {
+      // This is a watchdog for a lossy push path. A transient pull failure must
+      // not fail the live turn; the next bounded interval retries it.
+    } finally {
+      this.pendingRequestReconcileInFlight = false;
+    }
+  }
+
+  /**
+   * A lossy MSP connection can drop the final events without emitting a later
+   * `view/gap`, leaving the UI "working" after Muse has durably completed.
+   * While a turn is active, compare our last observed cursor with a read-only
+   * snapshot head and splice any missing suffix through the same ordered view
+   * recovery path used for explicit gaps.
+   */
+  private async reconcileViewTail(): Promise<void> {
+    if (
+      this.disposed ||
+      !this.sessionId ||
+      !this.activeTurnId ||
+      !this.lastViewCursor ||
+      this.viewGapRecovery ||
+      this.viewTailReconcileInFlight
+    ) {
+      return;
+    }
+    const sessionId = this.sessionId;
+    const afterCursor = this.lastViewCursor;
+    this.viewTailReconcileInFlight = true;
+    try {
+      const snapshot = await this.client.request("session/read", {
+        sessionId,
+        excludeItems: true,
+      });
+      const snapshotSession = recordOf(snapshot["session"]);
+      const hostIsIdle =
+        snapshotSession?.["status"] === "idle" &&
+        stringValue(snapshotSession["activeTurnId"]) === undefined;
+      const headCursor = await this.resolveCurrentViewHead(
+        sessionId,
+        stringValue(snapshot["viewCursor"]),
+      );
+      if (
+        !headCursor ||
+        headCursor === afterCursor ||
+        this.lastViewCursor !== afterCursor ||
+        this.viewGapRecovery
+      ) {
+        if (hostIsIdle && this.activeTurnId) this.completeTurn(this.activeTurnId, "completed");
+        return;
+      }
+      const recovery: MuseViewGapRecovery = {
+        nextCursor: headCursor,
+        includeNextCursor: true,
+        buffered: [],
+      };
+      this.viewGapRecovery = recovery;
+      try {
+        await this.fillViewGap(sessionId, afterCursor, recovery);
+        this.finishViewGapRecovery(recovery);
+        if (hostIsIdle && this.activeTurnId) this.completeTurn(this.activeTurnId, "completed");
+      } catch (error) {
+        this.failViewGapRecovery(recovery, error);
+      }
+    } catch {
+      // A transient snapshot failure is non-terminal; the next watchdog tick
+      // retries while the turn still appears active.
+    } finally {
+      this.viewTailReconcileInFlight = false;
+    }
+  }
+
+  /**
+   * Muse 1.0.3 can return an empty `session/read.viewCursor` when its folded
+   * projection is unavailable even though the durable view is pageable. Use
+   * the final event of a one-row backward page as the authoritative head.
+   */
+  private async resolveCurrentViewHead(
+    sessionId: string,
+    hintedCursor: string | undefined,
+  ): Promise<string | undefined> {
+    if (hintedCursor) return hintedCursor;
+    const page = await this.client.request("view/page", {
+      sessionId,
+      direction: "backward",
+      limit: 1,
+    });
+    const events = Array.isArray(page["events"]) ? page["events"] : [];
+    const latestEvent = recordOf(events.at(-1));
+    return stringValue(recordOf(latestEvent?.["params"])?.["viewCursor"]);
+  }
+
+  /**
    * Answer an approval on the user's behalf without ever surfacing it. Runs
    * from a notification/server-request handler, so failures are reported on
    * the session error channel rather than thrown.
@@ -830,15 +1436,20 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
     approvalId: string,
     requirementId: Record<string, unknown>,
     choiceId: string,
+    originalParams: Record<string, unknown>,
   ): void {
-    const report = (error: unknown) => {
+    const surfaceAfterFailure = (error: unknown) => {
+      this.autoApprovalsInFlight.delete(approvalId);
       this.emit({ type: "error", threadId: this.input.threadId, message: errorMessage(error) });
+      const latestParams = this.queuedAutoApprovalUpdates.get(approvalId) ?? originalParams;
+      this.queuedAutoApprovalUpdates.delete(approvalId);
+      if (!this.disposed) this.openApproval(latestParams, false);
     };
     let sessionId: string;
     try {
       sessionId = this.requireSessionId();
     } catch (error) {
-      report(error);
+      surfaceAfterFailure(error);
       return;
     }
     void this.client
@@ -849,7 +1460,13 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
         requirementId,
         choiceId,
       })
-      .catch(report);
+      .then(() => {
+        this.autoApprovalsInFlight.delete(approvalId);
+        const nextParams = this.queuedAutoApprovalUpdates.get(approvalId);
+        this.queuedAutoApprovalUpdates.delete(approvalId);
+        if (nextParams && !this.disposed) this.openApproval(nextParams);
+      })
+      .catch(surfaceAfterFailure);
   }
 
   private openUserInput(params: Record<string, unknown>): void {
@@ -917,6 +1534,8 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
     params?: Record<string, unknown>,
   ): void {
     if (!requestId) return;
+    this.autoApprovalsInFlight.delete(requestId);
+    this.queuedAutoApprovalUpdates.delete(requestId);
     const pending = this.pendingRequests.get(requestId);
     if (!pending || !this.pendingRequests.delete(requestId)) return;
     this.emit({
@@ -988,7 +1607,15 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
       status: this.status,
       attention: this.attention,
       config: this.currentConfig,
-      ...(this.sessionId ? { sessionRef: createKnownSessionRef(this.sessionId) } : {}),
+      ...(this.sessionId
+        ? {
+            sessionRef: {
+              ...createKnownSessionRef(this.sessionId),
+              ...(this.sessionDiscoveredAt ? { discoveredAt: this.sessionDiscoveredAt } : {}),
+              ...(this.lastViewCursor ? { providerCursor: this.lastViewCursor } : {}),
+            },
+          }
+        : {}),
     });
   }
 

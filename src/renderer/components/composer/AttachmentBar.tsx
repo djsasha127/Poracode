@@ -121,6 +121,7 @@ function AttachmentChip(props: {
   onPreviewPdf?: ((attachment: Attachment) => void) | undefined;
   hideImageName?: boolean;
   imageUrlForPath?: ((path: string) => string) | undefined;
+  statusLabel?: string | undefined;
 }) {
   const { t } = useLingui();
   const {
@@ -130,6 +131,7 @@ function AttachmentChip(props: {
     onPreviewPdf,
     hideImageName,
     imageUrlForPath,
+    statusLabel,
   } = props;
   const isPicked = !!att.selector;
   const labelText = isPicked ? att.selector! : att.name;
@@ -164,6 +166,11 @@ function AttachmentChip(props: {
       {showLabel ? (
         <span className={labelClass} {...(tooltip ? { title: tooltip } : {})}>
           {labelText}
+        </span>
+      ) : null}
+      {statusLabel ? (
+        <span className="max-w-28 truncate text-[10px] text-muted" title={statusLabel}>
+          {statusLabel}
         </span>
       ) : null}
       {onRemove ? (
@@ -258,6 +265,7 @@ export function AttachmentBar(props: {
   hideImageNames?: boolean;
   imagesAsPreview?: boolean;
   imageUrlForPath?: (path: string) => string;
+  statusLabelForAttachment?: (attachment: Attachment) => string;
   leading?: ReactNode;
 }) {
   const {
@@ -269,6 +277,7 @@ export function AttachmentBar(props: {
     hideImageNames,
     imagesAsPreview,
     imageUrlForPath,
+    statusLabelForAttachment,
     leading,
   } = props;
   if (attachments.length === 0 && !leading) return null;
@@ -297,6 +306,7 @@ export function AttachmentBar(props: {
             onPreviewImage={onPreviewImage}
             onPreviewPdf={onPreviewPdf}
             imageUrlForPath={imageUrlForPath}
+            statusLabel={statusLabelForAttachment?.(att)}
             {...(hideImageNames === undefined ? {} : { hideImageName: hideImageNames })}
           />
         ),

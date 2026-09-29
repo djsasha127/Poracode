@@ -116,6 +116,7 @@ export async function withClaudeEstimatedCost(
       ...snapshot,
       cost: scan.estimate.cost,
       tokens: scan.estimate.tokens,
+      ...(scan.estimate.history ? { history: scan.estimate.history } : {}),
     };
   } catch {
     return snapshot;

@@ -10,7 +10,7 @@
 
 import type { SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { RuntimeEvent } from "@/shared/contracts";
-import { readClaudeApiUsageSpendTokens } from "./result";
+import { readClaudeApiUsageBreakdown, readClaudeApiUsageSpendTokens } from "./result";
 import { readClaudeAssistantMessageId } from "./helpers";
 
 /**
@@ -73,6 +73,7 @@ export function createClaudeUsageSpentEvent(
 ): RuntimeEvent | undefined {
   const counter = readClaudeAssistantSpendTokens(message);
   if (counter === undefined) return undefined;
+  const breakdown = readClaudeApiUsageBreakdown(message.message?.usage);
   // Stable per API message (`msg_…:req_…`) so replays dedup exactly once in
   // the ledger; fall back to the envelope uuid when the payload has no id.
   const sampleId = readClaudeAssistantUsageSampleId(message);
@@ -83,6 +84,7 @@ export function createClaudeUsageSpentEvent(
     usage: {
       counterKind: "per-call",
       counter,
+      ...(breakdown ? { breakdown } : {}),
       scopeId: meta.scopeId,
       epoch: meta.epoch,
       ...(meta.fresh ? { fresh: true } : {}),

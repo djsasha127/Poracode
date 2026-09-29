@@ -1,8 +1,10 @@
 import { startTransition } from "react";
 import { isHomeProject } from "@/shared/homeScope";
 import { makeDraftPaneId } from "@/shared/paneId";
-import type { Project, Thread } from "@/shared/contracts";
+import { isProjectInWorkspace, type Project, type Thread } from "@/shared/contracts";
 import { useAppStore } from "@/renderer/state/appStore";
+import { orderProjectIds, useSidebarUiStore } from "@/renderer/state/sidebarUiStore";
+import { getActiveWorkspaceId, getKnownWorkspaceIds } from "@/renderer/state/workspaceStore";
 import { findExperimentByThreadId } from "@/renderer/state/experimentStore";
 import type {
   DragSourceData,
@@ -15,6 +17,7 @@ import type { ReorderPlacement } from "@/renderer/state/reorder";
 import { FLAT_THREAD_LIST_SORT_GROUP } from "@/renderer/views/MainView/parts/Sidebar/parts/sidebarProjectRows";
 import { dockPanelTab, showFilesPanel, showGitReviewPanel } from "@/renderer/actions/panelActions";
 import { showTerminalPanel } from "@/renderer/actions/terminalActions";
+import { prepareThreadForPane } from "@/renderer/actions/threadActions";
 
 type ThreadDragSource = Extract<DragSourceData, { type: "thread" }>;
 type ProjectDragSource = Extract<DragSourceData, { type: "project" }>;
@@ -105,6 +108,7 @@ export function resolveThreadReorder(input: {
 
 export function useDndHandlers() {
   const reorderProjects = useAppStore((s) => s.reorderProjects);
+  const reorderProjectOrder = useSidebarUiStore((s) => s.reorderProjectOrder);
   const reorderThreads = useAppStore((s) => s.reorderThreads);
   const reorderThreadsAcrossProjects = useAppStore((s) => s.reorderThreadsAcrossProjects);
   const replacePaneById = useAppStore((s) => s.replacePaneById);
@@ -122,7 +126,23 @@ export function useDndHandlers() {
     target: DragSourceData | null,
   ) {
     if (source.type === "project") {
-      const projects = useAppStore.getState().projects.filter((project) => !isHomeProject(project));
+      const stateProjects = useAppStore.getState().projects;
+      const projectsById = new Map(stateProjects.map((project) => [project.id, project]));
+      const activeWorkspaceId = getActiveWorkspaceId();
+      const knownWorkspaceIds = getKnownWorkspaceIds();
+      const workspaceProjectIds = orderProjectIds(
+        stateProjects
+          .filter(
+            (project) =>
+              !isHomeProject(project) &&
+              isProjectInWorkspace(project, activeWorkspaceId, knownWorkspaceIds),
+          )
+          .map((project) => project.id),
+        useSidebarUiStore.getState().projectOrder,
+      );
+      const projects = workspaceProjectIds
+        .map((id) => projectsById.get(id))
+        .filter((project): project is Project => project !== undefined);
       const reorder = resolveProjectReorder({
         projects,
         source,
@@ -131,7 +151,13 @@ export function useDndHandlers() {
         finalIndex,
       });
       if (!reorder) return;
-      startTransition(() => reorderProjects(source.projectId, reorder.targetId, reorder.placement));
+      const allProjectIds = stateProjects
+        .filter((project) => !isHomeProject(project))
+        .map((project) => project.id);
+      startTransition(() => {
+        reorderProjectOrder(source.projectId, reorder.targetId, reorder.placement, allProjectIds);
+        reorderProjects(source.projectId, reorder.targetId, reorder.placement);
+      });
     } else if (source.type === "thread") {
       if (findExperimentByThreadId(source.threadId)) return;
       const allThreads = useAppStore.getState().threads;
@@ -185,6 +211,7 @@ export function useDndHandlers() {
           }));
         }
       });
+      void prepareThreadForPane(threadId);
     } else if (source.type === "pane") {
       const sourcePaneId = source.paneId;
       if (target.kind === "replace") {

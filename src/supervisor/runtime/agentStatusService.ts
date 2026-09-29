@@ -102,7 +102,8 @@ const execFileAsync = promisify(execFile);
 // the plugin activation endpoint; cached empty catalogs are no longer valid.
 // v36 re-probes native account catalogs after restoring the CLI database path.
 export const STATUS_CACHE_VERSION = 36;
-const WSL_AGENT_DETECTION_TIMEOUT_MS = 60_000;
+/** One wedged provider CLI must never withhold every provider from the UI/Crossagents roster. */
+const AGENT_DETECTION_TIMEOUT_MS = 60_000;
 const WSL_LXSS_REGISTRY_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss";
 
 /**
@@ -150,6 +151,33 @@ async function detectAdapterInstall(
       status.loginCommand,
     ),
   };
+}
+
+async function detectAdapterInstallWithTimeout(
+  adapter: AgentAdapter,
+  context: AgentEnvContext,
+  label: string,
+): Promise<AgentStatus> {
+  const abort = new AbortController();
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      detectAdapterInstall(adapter, { ...context, signal: abort.signal }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          abort.abort();
+          reject(
+            new Error(
+              `detectInstall(${adapter.kind}, ${label}) timed out after ${AGENT_DETECTION_TIMEOUT_MS}ms`,
+            ),
+          );
+        }, AGENT_DETECTION_TIMEOUT_MS);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function migrateSettingDef(definition: Record<string, unknown>): Record<string, unknown> {
@@ -286,24 +314,7 @@ export async function detectWslAgentStatuses(
             };
           } else {
             try {
-              let timeout: NodeJS.Timeout | undefined;
-              const abort = new AbortController();
-              const detected = await Promise.race([
-                adapter.detectInstall({ ...ctx, signal: abort.signal }),
-                new Promise<never>((_, reject) => {
-                  timeout = setTimeout(() => {
-                    abort.abort();
-                    reject(
-                      new Error(
-                        `detectInstall(${adapter.kind}, wsl:${distro}) timed out after ${WSL_AGENT_DETECTION_TIMEOUT_MS}ms`,
-                      ),
-                    );
-                  }, WSL_AGENT_DETECTION_TIMEOUT_MS);
-                  if (typeof timeout.unref === "function") timeout.unref();
-                }),
-              ]).finally(() => {
-                if (timeout) clearTimeout(timeout);
-              });
+              const detected = await detectAdapterInstallWithTimeout(adapter, ctx, `wsl:${distro}`);
               status = { ...detected, envKind: "wsl" as const, envDistro: distro };
             } catch (error) {
               console.error(
@@ -414,6 +425,24 @@ export class AgentStatusService {
     const cached = this.readCachedStatuses(wslDistros);
     this.detectStartupAgentStatusesBackground(wslDistros);
     return cached;
+  }
+
+  /**
+   * Return a complete status roster for a caller that cannot use the UI's
+   * incremental loading state (notably Crossagents `list_agents`). A stale or
+   * missing cache joins the already-running startup sweep instead of returning
+   * an empty provider list while detection is still in flight.
+   */
+  async getAgentStatusesReady(payload: GetAgentStatusesPayload): Promise<AgentStatusesResponse> {
+    const wslDistros = [...new Set(payload.wslDistros)];
+    const cached = this.readCachedStatuses(wslDistros);
+    if (cached.fromCache) return cached;
+
+    this.detectStartupAgentStatusesBackground(wslDistros);
+    const pending = this.pendingDetection;
+    if (!pending) return cached;
+    const fresh = await pending;
+    return { ...fresh, fromCache: false };
   }
 
   /**
@@ -585,7 +614,11 @@ export class AgentStatusService {
           ...(agentSettings ? { agentSettings } : {}),
         };
     try {
-      const detected = await detectAdapterInstall(adapter, ctx);
+      const detected = await detectAdapterInstallWithTimeout(
+        adapter,
+        ctx,
+        isWsl ? `wsl:${env.distro}` : "native",
+      );
       return {
         ...detected,
         envKind,
@@ -770,10 +803,14 @@ export class AgentStatusService {
               { kind: "native" },
               adapter.kind,
             );
-            const detected = await detectAdapterInstall(adapter, {
-              envKind: nativeEnvKind,
-              ...(agentSettings ? { agentSettings } : {}),
-            });
+            const detected = await detectAdapterInstallWithTimeout(
+              adapter,
+              {
+                envKind: nativeEnvKind,
+                ...(agentSettings ? { agentSettings } : {}),
+              },
+              "native",
+            );
             status = { ...detected, envKind: nativeEnvKind };
           } catch (error) {
             console.error(`[supervisor] detectInstall(${adapter.kind}) failed`, error);

@@ -29,7 +29,10 @@ export function DraftPane(props: {
     type: "pane",
     data: { type: "pane", paneId: props.paneId } satisfies DragSourceData,
     disabled: props.paneCount <= 1,
-    element: paneElementRef,
+    // Do not let a disabled Draggable mark the entire single-pane draft as
+    // aria-disabled; that otherwise disables its composer for assistive tech
+    // and automation even though the draft itself is usable.
+    element: props.paneCount > 1 ? paneElementRef : undefined,
   });
   useDroppable({
     id: `pane-drop:${props.paneId}`,

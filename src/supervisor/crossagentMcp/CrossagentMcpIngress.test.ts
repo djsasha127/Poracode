@@ -267,6 +267,7 @@ describe("CrossagentMcpIngress", () => {
     const names = (body.result.tools as Array<{ name: string }>).map((t) => t.name).sort();
     expect(names).toEqual([
       "cancel",
+      "delegate_agent",
       "get_agent",
       "get_status",
       "list_agents",
@@ -288,11 +289,16 @@ describe("CrossagentMcpIngress", () => {
       "spawn_agent",
     );
     expect(listBody.result.tools.map((tool: { name: string }) => tool.name)).not.toContain(
+      "delegate_agent",
+    );
+    expect(listBody.result.tools.map((tool: { name: string }) => tool.name)).not.toContain(
       "spawn_agents",
     );
 
     const call = await rpc("tools/call", { name: "spawn_agent", arguments: {} });
     expect((await call.json()).result).toMatchObject({ isError: true });
+    const delegateCall = await rpc("tools/call", { name: "delegate_agent", arguments: {} });
+    expect((await delegateCall.json()).result).toMatchObject({ isError: true });
     const batchCall = await rpc("tools/call", { name: "spawn_agents", arguments: {} });
     expect((await batchCall.json()).result).toMatchObject({ isError: true });
   });

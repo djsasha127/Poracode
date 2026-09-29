@@ -47,11 +47,12 @@ import {
   useWorkspaceThreadFilter,
 } from "@/renderer/state/workspaceSelectors";
 import { SidebarFlatThreadList } from "./parts/SidebarFlatThreadList";
+import { SidebarFavoritesSection } from "./parts/SidebarFavoritesSection";
 import { SidebarFooterNav } from "./parts/SidebarFooterNav";
 import { SidebarProjectThreadList } from "./parts/SidebarProjectThreadList";
+import { SidebarExternalSessions } from "./parts/SidebarExternalSessions";
 import { UpdateButtons } from "./parts/UpdateButtons";
 import { useSidebarShortcuts } from "./parts/sidebarShortcuts";
-import { WhatsNewButton } from "./parts/WhatsNewButton";
 import {
   RemoteAccessSidebarIcon,
   type RemoteAccessSidebarStatus,
@@ -323,7 +324,6 @@ export function Sidebar() {
           <div className="flex flex-col gap-1 border-t border-[var(--hairline)] pt-2 pb-2 pr-2">
             <ProviderUsageRail orientation="column" />
             <UpdateButtons iconOnly />
-            <WhatsNewButton iconOnly />
             {sidebarShortcuts.map((shortcut) => (
               <SidebarButton
                 key={shortcut.id}
@@ -394,6 +394,11 @@ export function Sidebar() {
             style={scrollFadeStyle}
           >
             <div className="space-y-4">
+              <SidebarFavoritesSection
+                projectIds={projectIds}
+                homeProject={homeProject}
+                homeScopeEnabled={homeScopeEnabled}
+              />
               {homeScopeEnabled && homeProject ? (
                 <section className="space-y-0.5">
                   <SidebarButton
@@ -422,7 +427,11 @@ export function Sidebar() {
                     }
                   />
                   {isHomeProjectCollapsed ? null : (
-                    <SidebarProjectThreadList project={homeProject} sortMode={sortMode} />
+                    <SidebarProjectThreadList
+                      project={homeProject}
+                      sortMode={sortMode}
+                      excludeStarred
+                    />
                   )}
                 </section>
               ) : null}
@@ -438,6 +447,9 @@ export function Sidebar() {
           </div>
         )}
 
+        <SidebarExternalSessions
+          {...(currentProjectId ? { fallbackProjectId: currentProjectId } : {})}
+        />
         <ProviderUsageRail orientation="row" />
         <SidebarFooterNav remoteAccessStatus={remoteAccessStatus} />
       </div>

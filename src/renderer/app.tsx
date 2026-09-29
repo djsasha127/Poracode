@@ -18,6 +18,7 @@ import {
 } from "./notifications";
 
 import { useAppStore } from "./state/appStore";
+import { adoptExternalDatabaseSnapshot } from "./state/externalDatabaseSnapshot";
 import { applyProjectStateSnapshot } from "./state/projectStateSync";
 import { useThreadFollowUpQueueStore } from "./state/threadFollowUpQueueStore";
 import { useGitReadModelStore } from "./state/gitReadModelStore";
@@ -455,6 +456,12 @@ const mainWindowCleanups: Array<() => void> = isMainWindow
       // before its next dbSyncAll persistence write.
       readBridge().onProjectStateChanged(({ projects, recoveredThreads }) => {
         applyProjectStateSnapshot(projects, recoveredThreads);
+      }),
+      // Stable and Nightly may be open together against the same SQLite file.
+      // Adopt the other process's metadata snapshot without echoing it back as
+      // a destructive full-store write; remote-server projections stay local.
+      readBridge().onDatabaseStateChanged(({ projects, threads }) => {
+        adoptExternalDatabaseSnapshot(projects, threads);
       }),
       readBridge().onGitStateChanged((patch) => {
         useGitReadModelStore.getState().applyPatch(patch);

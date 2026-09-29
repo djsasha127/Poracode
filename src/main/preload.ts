@@ -10,6 +10,7 @@ import {
   IPC_WINDOW_CHANNELS,
   PORACODE_WINDOW_KINDS,
   type BrowserEvent,
+  type DatabaseStateChangedEvent,
   type PoracodeBridge,
   type PoracodeWindowKind,
   type PrWatchMergedEvent,
@@ -190,6 +191,15 @@ const bridge: PoracodeBridge = {
     ipcRenderer.on(IPC_EVENT_CHANNELS.projectStateChanged, handler);
     return () => {
       ipcRenderer.removeListener(IPC_EVENT_CHANNELS.projectStateChanged, handler);
+    };
+  },
+  onDatabaseStateChanged(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: DatabaseStateChangedEvent) => {
+      listener(payload);
+    };
+    ipcRenderer.on(IPC_EVENT_CHANNELS.databaseStateChanged, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_EVENT_CHANNELS.databaseStateChanged, handler);
     };
   },
   onGitStateChanged(listener) {

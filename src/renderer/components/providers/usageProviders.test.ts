@@ -6,6 +6,7 @@ import {
   isClaudeUsageProvider,
   needsBrowserSessionForUsage,
   pickUsageRings,
+  resolveCombinedUsageSnapshot,
   resolveDisplayedProviders,
   supportsApiKeyLogin,
   supportsBrowserLogin,
@@ -212,6 +213,54 @@ describe("usageProviders", () => {
       const rings = pickUsageRings("antigravity", onlyClaude, "gemini");
       expect(rings.outer?.id).toBe("antigravity:claude:session-5h");
       expect(rings.inner).toBeUndefined();
+    });
+  });
+});
+
+describe("resolveCombinedUsageSnapshot", () => {
+  const snapshot = (
+    providerId: string,
+    status: UsageStatus,
+    windows: UsageWindow[] = [],
+  ): UsageSnapshot => ({ providerId, status, windows, fetchedAt: 0 });
+
+  it("prefers real remote meters when the SSH host can collect them", () => {
+    const local = snapshot("codex", "ok", [{ id: "weekly", label: "Weekly", usedPercent: 10 }]);
+    const remote = snapshot("codex", "ok", [{ id: "weekly", label: "Weekly", usedPercent: 40 }]);
+
+    expect(resolveCombinedUsageSnapshot(local, remote)).toEqual({
+      snapshot: remote,
+      source: "remote",
+    });
+  });
+
+  it("keeps local browser-backed meters when the SSH host has no credential", () => {
+    const local = snapshot("muse", "ok", [{ id: "session-5h", label: "Session", usedPercent: 25 }]);
+    const remote = snapshot("muse", "auth-missing");
+
+    expect(resolveCombinedUsageSnapshot(local, remote)).toEqual({
+      snapshot: local,
+      source: "local",
+    });
+  });
+
+  it("keeps the local signed-out snapshot so in-app browser sign-in remains available", () => {
+    const local = snapshot("muse", "auth-missing");
+    const remote = snapshot("muse", "auth-missing");
+
+    expect(resolveCombinedUsageSnapshot(local, remote)).toEqual({
+      snapshot: local,
+      source: "local",
+    });
+  });
+
+  it("keeps an authenticated remote CLI ahead of a signed-out local fallback", () => {
+    const local = snapshot("muse", "auth-missing");
+    const remote = { ...snapshot("muse", "ok"), plan: "Muse Code" };
+
+    expect(resolveCombinedUsageSnapshot(local, remote)).toEqual({
+      snapshot: remote,
+      source: "remote",
     });
   });
 });

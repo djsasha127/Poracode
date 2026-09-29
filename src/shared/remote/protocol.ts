@@ -125,6 +125,12 @@ export const remoteEnvironmentDescriptorSchema = z.object({
   desktopId: z.string().min(1),
   label: z.string().min(1),
   appVersion: z.string().min(1),
+  capabilities: z
+    .object({
+      /** Additive endpoint family; absent on older helpers and safe to feature-detect. */
+      usageHistory: z.number().int().positive().optional(),
+    })
+    .optional(),
   /**
    * Host OS of the paired desktop (`win32` / `darwin` / `linux`). Optional for
    * older servers; clients that need host-gated features (Computer Use) should
@@ -625,9 +631,9 @@ export type RemoteRuntimeItemsPage = z.infer<typeof remoteRuntimeItemsPageSchema
  * PWA, as opposed to its device-local settings). Only settings the desktop
  * itself acts on belong here — the AI helpers (title/commit generation,
  * conflict resolver), agent/model configuration (each desktop has its own set
- * of agents and models), and persistent composer MCP enablement. Deliberately
- * excludes secrets (providerConfigs and custom MCP definitions) and
- * device-local preferences (theme, fonts, audio, …).
+ * of agents and models), usage collection, and persistent composer MCP
+ * enablement. Deliberately excludes secrets (providerConfigs and custom MCP
+ * definitions) and device-local preferences (theme, fonts, audio, …).
  */
 const remoteAgentSettingsSchema = sharedSettingsSchema.shape.agentSettings.transform((settings) =>
   Object.fromEntries(
@@ -676,6 +682,9 @@ export const remoteSettingsSchema = sharedSettingsSchema
   .extend({
     agentSettings: remoteAgentSettingsSchema,
     followUpBehavior: sharedSettingsSchema.shape.followUpBehavior.optional().default("steer"),
+    // Optional keeps clients compatible with helpers that predate remotely
+    // managed usage-history sources. New helpers always return the full group.
+    usage: sharedSettingsSchema.shape.usage.optional(),
   });
 export type RemoteSettings = z.infer<typeof remoteSettingsSchema>;
 

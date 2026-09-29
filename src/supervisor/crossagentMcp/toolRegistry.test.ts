@@ -66,6 +66,28 @@ function makeStatus(overrides: Partial<AgentStatus> = {}): AgentStatus {
 }
 
 describe("buildSpawnableAgents", () => {
+  it("exposes each authenticated profile as its own Crossagents provider", () => {
+    const profileKind = "codex:work" as AgentKind;
+    const profileAdapter = {
+      kind: profileKind,
+      createStructuredSession: async () => ({}),
+    } as unknown as AgentAdapter;
+    const adapters = new Map<AgentKind, AgentAdapter>([[profileKind, profileAdapter]]);
+    const [profile] = buildSpawnableAgents(adapters, [
+      makeStatus({
+        kind: profileKind,
+        label: "Codex · Work",
+        capabilities: {
+          ...makeStatus().capabilities,
+          models: [{ id: "gpt-5.5", label: "GPT-5.5" }],
+        },
+      }),
+    ]);
+
+    expect(profile?.provider).toEqual({ value: "codex:work", label: "Codex · Work" });
+    expect(profile?.execution).toBe("structured");
+  });
+
   it("attaches a tier to each model", () => {
     const adapters = new Map<AgentKind, AgentAdapter>([
       [
@@ -518,6 +540,7 @@ describe("subagent tool registration", () => {
       "list_agents",
       "get_agent",
       "spawn_agent",
+      "delegate_agent",
       "list_routing_preferences",
       "set_routing_preference",
       "remove_routing_preference",
@@ -552,6 +575,9 @@ describe("subagent tool registration", () => {
     // whole turn with a provider error, so the prompt/tasks choice is documented
     // in the tool description and enforced by the request parser instead.
     expect(byName.get("spawn_agent")!.inputSchema).not.toHaveProperty("oneOf");
+    expect(byName.get("delegate_agent")!.inputSchema).toEqual(
+      byName.get("spawn_agent")!.inputSchema,
+    );
     expect(byName.get("wait_for_agent")!.inputSchema).not.toHaveProperty("oneOf");
     expect(byName.get("spawn_agent")!.inputSchema).toMatchObject({
       type: "object",
@@ -585,6 +611,14 @@ describe("subagent tool registration", () => {
       destructiveHint: true,
       openWorldHint: true,
     });
+    expect(byName.get("delegate_agent")!.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    });
+    expect(CROSSAGENT_MCP_INSTRUCTIONS_BASE).toContain(
+      "Use delegate_agent for new delegation calls",
+    );
   });
 
   it("documents background runs as an explicit join that keeps working across wait timeouts", () => {
@@ -1060,20 +1094,24 @@ describe("subagent tool registration", () => {
 
   it("validates and routes steering with parent ownership", async () => {
     const { ctx } = makeToolContext();
-    const steer = vi.fn<SubagentRunManager["steer"]>(async () => {});
-    ctx.runManager = { steer } as unknown as SubagentRunManager;
+    const sendMessage = vi.fn<SubagentRunManager["sendMessage"]>(async () => "steered");
+    ctx.runManager = { sendMessage } as unknown as SubagentRunManager;
     expect((await dispatchTool("steer_agent", { run_id: "r", prompt: "  " }, ctx)).isError).toBe(
       true,
     );
     expect((await dispatchTool("steer_agent", { prompt: "focus" }, ctx)).isError).toBe(true);
-    expect(steer).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
     const result = await dispatchTool(
       "steer_agent",
       { run_id: "r", prompt: "focus on tests" },
       ctx,
     );
-    expect(JSON.parse(resultText(result))).toEqual({ run_id: "r", status: "accepted" });
-    expect(steer).toHaveBeenCalledWith("r", "focus on tests", ctx.parentThreadId);
+    expect(JSON.parse(resultText(result))).toEqual({
+      run_id: "r",
+      status: "accepted",
+      delivery: "steered",
+    });
+    expect(sendMessage).toHaveBeenCalledWith("r", "focus on tests", ctx.parentThreadId);
     expect(TOOLS.find((tool) => tool.name === "steer_agent")?.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: true,

@@ -3,6 +3,7 @@ import { msg } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { ProfileCoreStats, ProfileStatsWindow, ProfileTokenStats } from "@/shared/contracts";
 import type { TranslateFn } from "@/renderer/i18n/i18n";
+import { formatEstimatedMoney } from "@/renderer/components/providers/usageFormat";
 import { formatCompact, formatDayLabel, formatDuration } from "../format";
 
 function Skeleton() {
@@ -70,11 +71,27 @@ export function StatStrip(props: {
   const unavailableLabels =
     tokens?.unavailableProviders.map((key) => unavailableProviderLabel(key, tokens)).join(", ") ??
     "";
+  const estimatedCost = pending ? (
+    <Skeleton />
+  ) : tokens?.estimatedCostUsd !== undefined ? (
+    `~${formatEstimatedMoney(tokens.estimatedCostUsd)}`
+  ) : (
+    "-"
+  );
+  const costCoverage =
+    tokens && tokens.lifetimeTokens > 0
+      ? t`${formatCompact(tokens.pricedTokens ?? 0)} of ${formatCompact(tokens.lifetimeTokens)} tokens priced`
+      : undefined;
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-border bg-border sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-border bg-border sm:grid-cols-3 lg:grid-cols-6">
         <Tile value={lifetime} label={window === "all" ? t`Lifetime tokens` : t`Total tokens`} />
+        <Tile
+          value={estimatedCost}
+          label={t`API-rate equivalent`}
+          {...(costCoverage ? { sub: costCoverage } : {})}
+        />
         <Tile
           value={peak}
           label={t`Peak day`}

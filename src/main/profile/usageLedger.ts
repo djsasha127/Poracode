@@ -26,6 +26,18 @@ import type { UsageEventInput } from "../db/usageEvents";
  */
 
 type UsageSpentEvent = Extract<RuntimeEvent, { type: "usage.spent" }>;
+type TokenCategory = "input" | "output" | "cacheRead" | "cacheWrite";
+
+const TOKEN_CATEGORY_KINDS: Record<TokenCategory, string> = {
+  input: "tokens_v2_input",
+  output: "tokens_v2_output",
+  cacheRead: "tokens_v2_cache_read",
+  cacheWrite: "tokens_v2_cache_write",
+};
+
+function breakdownScopeId(scopeId: string, category: TokenCategory): string {
+  return `${scopeId}::poracode-billable:${category}`;
+}
 
 // Threads legitimately disappear (delete) while a supervisor stream is still
 // flushing. Log a missing thread once per process, not per event.
@@ -52,6 +64,11 @@ export function recordUsageSpentFromRuntimeEvents(
   // Full account-scoped kind (e.g. "claude:work"), matching existing
   // usage_events conventions; the global rollup folds to the base provider.
   const provider = thread.agentKind;
+  const threadUsageMetadata = {
+    mode: thread.config.mode ?? null,
+    fast: thread.config.fast ?? false,
+    effort: thread.config.effort ?? null,
+  };
 
   const sqlite = getSqlite();
   const readLedger = sqlite.prepare(
@@ -71,6 +88,7 @@ export function recordUsageSpentFromRuntimeEvents(
       const usage = event.usage;
       const ts = usage.occurredAt ?? Date.now();
       let amount = 0;
+      let sampleAccepted = false;
       if (usage.counterKind === "cumulative") {
         const existing = readLedger.get(provider, usage.scopeId, usage.epoch) as
           | { last_counter: number }
@@ -78,27 +96,66 @@ export function recordUsageSpentFromRuntimeEvents(
         if (!existing) {
           writeLedger.run(provider, usage.scopeId, usage.epoch, usage.counter);
           amount = usage.fresh === true ? usage.counter : 0;
+          sampleAccepted = true;
         } else {
           const delta = usage.counter - existing.last_counter;
           if (delta > 0) {
             writeLedger.run(provider, usage.scopeId, usage.epoch, usage.counter);
             amount = delta;
+            sampleAccepted = true;
           }
           // Equal/out-of-order samples count nothing and leave state untouched.
         }
       } else {
         // per-call: counted only when the dedup insert actually happened.
         const inserted = insertSample.run(usage.sampleId, ts);
-        amount = inserted.changes === 1 ? usage.counter : 0;
+        sampleAccepted = inserted.changes === 1;
+        amount = sampleAccepted ? usage.counter : 0;
       }
-      if (amount <= 0) continue;
-      rows.push({
-        ts,
-        kind: "tokens_v2",
-        provider,
-        model: usage.model ?? thread.config.model ?? null,
-        value: amount,
-      });
+      const model = usage.model ?? thread.config.model ?? null;
+      if (amount > 0) {
+        rows.push({
+          ts,
+          kind: "tokens_v2",
+          provider,
+          model,
+          ...threadUsageMetadata,
+          value: amount,
+        });
+      }
+      if (!sampleAccepted || !usage.breakdown) continue;
+      for (const category of Object.keys(TOKEN_CATEGORY_KINDS) as TokenCategory[]) {
+        const counter = usage.breakdown[category];
+        if (counter === undefined) continue;
+        let categoryAmount = 0;
+        if (usage.counterKind === "per-call") {
+          categoryAmount = counter;
+        } else {
+          const categoryScope = breakdownScopeId(usage.scopeId, category);
+          const existing = readLedger.get(provider, categoryScope, usage.epoch) as
+            | { last_counter: number }
+            | undefined;
+          if (!existing) {
+            writeLedger.run(provider, categoryScope, usage.epoch, counter);
+            categoryAmount = usage.fresh === true ? counter : 0;
+          } else {
+            const delta = counter - existing.last_counter;
+            if (delta > 0) {
+              writeLedger.run(provider, categoryScope, usage.epoch, counter);
+              categoryAmount = delta;
+            }
+          }
+        }
+        if (categoryAmount <= 0) continue;
+        rows.push({
+          ts,
+          kind: TOKEN_CATEGORY_KINDS[category],
+          provider,
+          model,
+          ...threadUsageMetadata,
+          value: categoryAmount,
+        });
+      }
     }
     dbAppendUsageEvents(rows);
   })();

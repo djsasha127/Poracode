@@ -30,6 +30,20 @@ const CURRENT_STORAGE_PREFIX = "poracode";
 const LEGACY_STORAGE_PREFIX = "lightcode";
 const lastStorageValues = new Map<string, StorageValue<unknown>>();
 const lastStorageJson = new Map<string, string>();
+let appStoreBaseline: { projects: Project[]; threads: Thread[] } | null = null;
+let suppressExternalSnapshotWrite = false;
+
+/**
+ * Adopt a database snapshot pushed by the other desktop process without
+ * echoing the same rows back through Zustand persistence.
+ */
+export function prepareForExternalDatabaseSnapshot(projects: Project[], threads: Thread[]): void {
+  appStoreBaseline = { projects, threads };
+  suppressExternalSnapshotWrite = true;
+  queueMicrotask(() => {
+    suppressExternalSnapshotWrite = false;
+  });
+}
 
 function legacyStorageName(name: string): string | null {
   return name.startsWith(CURRENT_STORAGE_PREFIX)
@@ -60,6 +74,11 @@ const dbStorageBackend = {
   },
 
   async setItem(name: string, value: StorageValue<unknown>): Promise<void> {
+    if (name === APP_STORE_NAME && suppressExternalSnapshotWrite) {
+      suppressExternalSnapshotWrite = false;
+      lastStorageValues.set(name, value);
+      return;
+    }
     const json = shouldSkipWrite(name, value);
     if (json === null) return;
     if (!hasBridge()) {
@@ -101,6 +120,8 @@ async function loadAppStore(): Promise<StorageValue<unknown> | null> {
     readBridge().dbGetThreads(),
     readBridge().dbGetState("view"),
   ]);
+
+  appStoreBaseline = { projects, threads };
 
   if (projects.length === 0 && threads.length === 0 && !viewJson) {
     return null;
@@ -147,13 +168,17 @@ async function saveAppStore(value: StorageValue<unknown>): Promise<void> {
       | undefined;
     if (!state || typeof state !== "object") return;
 
-    readBridge()
-      .dbSyncAll(
-        state.projects ?? [],
-        state.threads ?? [],
-        JSON.stringify(state.view ?? { kind: "home" }),
-      )
-      .catch((error) => reportPersistError("projects/threads/view", error));
+    const projects = state.projects ?? [];
+    const threads = state.threads ?? [];
+    const baseline = appStoreBaseline;
+    await readBridge().dbSyncAll(
+      projects,
+      threads,
+      JSON.stringify(state.view ?? { kind: "home" }),
+      baseline?.projects,
+      baseline?.threads,
+    );
+    appStoreBaseline = { projects, threads };
     if (state.groupLayouts) {
       readBridge()
         .dbSetState("groupLayouts", JSON.stringify(state.groupLayouts))

@@ -515,22 +515,26 @@ export function createLocalIpcHandlers(
       publishProjectsChanged();
       publishThreadsChanged(threadIds);
     },
-    dbSyncAll: ({ projects, threads, viewJson }) => {
+    dbSyncAll: ({ projects, threads, viewJson, baseProjects, baseThreads }) => {
       // Desktop-originated project and thread changes reach SQLite only through
       // this persist. Diff before writing, then publish the same events remote
       // commands send; the remote's debounced refresh reads the post-write state.
-      const projectsChanged = syncedProjectsChanged(dbGetProjects(), projects);
-      const { changedThreadIds, viewedThreadIds } = diffSyncedThreads(dbGetThreads(), threads);
-      const repaired = dbSyncAll(projects, threads, viewJson);
+      const previousProjects = dbGetProjects();
+      const previousThreads = dbGetThreads();
+      const repaired = dbSyncAll(projects, threads, viewJson, baseProjects, baseThreads);
+      const nextProjects = dbGetProjects();
+      const nextThreads = dbGetThreads();
+      const projectsChanged = syncedProjectsChanged(previousProjects, nextProjects);
+      const { changedThreadIds, viewedThreadIds } = diffSyncedThreads(previousThreads, nextThreads);
       if (repaired) {
         // Reconcile the originating desktop too. Include unseen recovered
         // threads so its next full-store write cannot delete their transcripts.
         options.getMainWindow()?.webContents.send(IPC_EVENT_CHANNELS.projectStateChanged, {
-          projects: dbGetProjects(),
-          recoveredThreads: dbGetThreads(),
+          projects: nextProjects,
+          recoveredThreads: nextThreads,
         });
       }
-      if (projectsChanged) publishProjectsChanged();
+      if (projectsChanged) publishProjectsChanged(nextProjects);
       publishThreadsChanged(changedThreadIds, viewedThreadIds);
     },
     dbPersistExperimentState: async (payload) => {

@@ -359,6 +359,7 @@ const remoteBridgeOverrides = {
   onRemoteAccessPairingChanged: () => () => undefined,
   onSharedSettingsChanged: () => () => undefined,
   onProjectStateChanged: () => () => undefined,
+  onDatabaseStateChanged: () => () => undefined,
   onThreadOpenRequested: () => () => undefined,
   onQuickComposerSubmit: () => () => undefined,
   onQuickComposerDismissRequested: () => () => undefined,

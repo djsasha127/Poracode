@@ -5,7 +5,9 @@ import {
   PORACODE_REMOTE_PROTOCOL_VERSION,
   REMOTE_SETTINGS_KEYS,
   pickRemoteSettings,
+  remoteEnvironmentDescriptorSchema,
   remotePushRegistrationSchema,
+  remoteSettingsSchema,
   remoteSettingsPatchSchema,
   remoteShellSnapshotSchema,
   remoteThreadSnapshotSchema,
@@ -63,6 +65,28 @@ describe("remote thread snapshots", () => {
     ).toEqual({ kind: "wsl", distro: "Ubuntu-24.04" });
     expect(PORACODE_REMOTE_PROTOCOL_VERSION).toBe(10);
     expect(LAUNCH_REMOTE_SERVER_SCRIPT).toContain("descriptor.protocolVersion === 10");
+    expect(LAUNCH_REMOTE_SERVER_SCRIPT).toContain('cat "$DATA_DIR/server.lock"');
+    expect(LAUNCH_REMOTE_SERVER_SCRIPT).toContain('stop_server "$PID"');
+  });
+
+  it("keeps the additive usage-history capability optional for older helpers", () => {
+    const parsed = remoteEnvironmentDescriptorSchema.parse({
+      protocolVersion: PORACODE_REMOTE_PROTOCOL_VERSION,
+      desktopId: "legacy-helper",
+      label: "Legacy helper",
+      appVersion: "1.8.0",
+      auth: {
+        policy: "remote-reachable",
+        bootstrapMethods: ["one-time-token"],
+        sessionMethods: ["bearer-access-token"],
+        scopes: ["session:read"],
+      },
+      endpoints: {
+        httpBaseUrl: "http://127.0.0.1:3000",
+        wsBaseUrl: "ws://127.0.0.1:3000",
+      },
+    });
+    expect(parsed.capabilities?.usageHistory).toBeUndefined();
   });
 });
 
@@ -188,6 +212,24 @@ describe("remote settings", () => {
     expect(remoteSettingsPatchSchema.parse({ titleGenProvider: "claude" })).toEqual({
       titleGenProvider: "claude",
     });
+  });
+
+  it("exposes usage-history folders while accepting legacy helpers that omit usage", () => {
+    const settings = pickRemoteSettings({
+      ...defaultSharedSettings,
+      usage: {
+        ...defaultSharedSettings.usage,
+        historySources: {
+          codex: [{ id: "ext", name: "EXT", path: "/archive/codex", enabled: true }],
+        },
+      },
+    });
+
+    expect(settings.usage?.historySources.codex).toEqual([
+      { id: "ext", name: "EXT", path: "/archive/codex", enabled: true },
+    ]);
+    const { usage: _usage, ...legacySettings } = settings;
+    expect(remoteSettingsSchema.parse(legacySettings).usage).toBeUndefined();
   });
 
   it("never exposes or accepts sensitive agent settings", () => {

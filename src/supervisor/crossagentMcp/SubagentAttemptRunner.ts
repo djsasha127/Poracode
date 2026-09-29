@@ -24,6 +24,7 @@ export interface AttemptExecutionState {
 interface AttemptCallbacks {
   isActive(): boolean;
   onWorking(): void;
+  onReady(): void;
   onRuntimeEvent(event: RuntimeEvent): void;
   onSettle(status: Exclude<SubagentRunStatus, "running">, errorMessage?: string): void;
 }
@@ -139,7 +140,10 @@ export class SubagentAttemptRunner {
       state.turnStarted = true;
       state.turnDispatched = true;
       await handle.startTurn(state.plan.prompt, config);
-      if (callbacks.isActive()) state.steerReady = true;
+      if (callbacks.isActive()) {
+        state.steerReady = true;
+        callbacks.onReady();
+      }
     } catch (error) {
       callbacks.onSettle(
         state.cancelRequested ? "cancelled" : "failed",

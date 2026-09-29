@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import type { Project, Thread } from "@/shared/contracts";
 import { useAppStore } from "@/renderer/state/appStore";
 import { FLAT_THREAD_LIST_SORT_GROUP } from "@/renderer/views/MainView/parts/Sidebar/parts/sidebarProjectRows";
+import { useSharedSettings } from "@/renderer/state/sharedSettingsStore";
+import { useSidebarUiStore } from "@/renderer/state/sidebarUiStore";
+import { useWorkspaceStore } from "@/renderer/state/workspaceStore";
 import { resolveProjectReorder, resolveThreadReorder, useDndHandlers } from "./useDndHandlers";
 
 const showFilesPanel = vi.fn<(projectId: string, worktreePath?: string) => void>();
 const showGitReviewPanel = vi.fn<(projectId: string, worktreePath?: string) => void>();
 const showTerminalPanel = vi.fn<(projectId: string, worktreePath?: string) => void>();
+const prepareThreadForPane = vi.fn<(threadId: string) => Promise<void>>().mockResolvedValue();
 
 vi.mock("@/renderer/actions/panelActions", () => ({
   showFilesPanel: (projectId: string, worktreePath?: string) =>
@@ -18,6 +22,9 @@ vi.mock("@/renderer/actions/panelActions", () => ({
 vi.mock("@/renderer/actions/terminalActions", () => ({
   showTerminalPanel: (projectId: string, worktreePath?: string) =>
     showTerminalPanel(projectId, worktreePath),
+}));
+vi.mock("@/renderer/actions/threadActions", () => ({
+  prepareThreadForPane: (threadId: string) => prepareThreadForPane(threadId),
 }));
 
 function makeThread(id: string, starred = false, projectId = "project-1"): Thread {
@@ -70,6 +77,44 @@ describe("resolveProjectReorder", () => {
         finalIndex: 0,
       }),
     ).toEqual({ targetId: "a", placement: "before" });
+  });
+});
+
+describe("useDndHandlers.handleSortEnd projects", () => {
+  it("reads the current persisted order for consecutive remote-project moves", () => {
+    useSharedSettings.setState({ workspaces: [] } as never);
+    useWorkspaceStore.setState({ activeWorkspaceId: null });
+    useSidebarUiStore.setState({ projectOrder: [] });
+    useAppStore.setState({
+      projects: [makeProject("a"), makeProject("b"), makeProject("c")],
+    });
+    const { result } = renderHook(() => useDndHandlers());
+
+    act(() =>
+      result.current.handleSortEnd(
+        { type: "project", projectId: "b" },
+        1,
+        0,
+        "projects",
+        "projects",
+        { type: "project", projectId: "a" },
+      ),
+    );
+    expect(useSidebarUiStore.getState().projectOrder).toEqual(["b", "a", "c"]);
+
+    // Deliberately reuse the same handler closure: it must consult current
+    // store state rather than the order captured by the initial render.
+    act(() =>
+      result.current.handleSortEnd(
+        { type: "project", projectId: "b" },
+        0,
+        1,
+        "projects",
+        "projects",
+        { type: "project", projectId: "a" },
+      ),
+    );
+    expect(useSidebarUiStore.getState().projectOrder).toEqual(["a", "b", "c"]);
   });
 });
 
@@ -297,5 +342,29 @@ describe("useDndHandlers.handleMainPanelDrop", () => {
     expect(showTerminalPanel).toHaveBeenCalledWith("project-1", "/repo/.worktrees/feature");
     expect(showFilesPanel).not.toHaveBeenCalled();
     expect(showGitReviewPanel).not.toHaveBeenCalled();
+  });
+});
+
+describe("useDndHandlers.handlePaneDrop", () => {
+  it("hydrates a never-opened thread after placing it in the requested pane", () => {
+    prepareThreadForPane.mockClear();
+    useAppStore.setState({
+      threads: [makeThread("existing"), makeThread("unopened")],
+      view: { kind: "thread", panes: ["existing"] },
+    });
+    const { result } = renderHook(() => useDndHandlers());
+
+    act(() =>
+      result.current.handlePaneDrop(
+        { type: "thread", threadId: "unopened", projectId: "project-1" },
+        { kind: "replace", paneId: "existing" },
+      ),
+    );
+
+    expect(useAppStore.getState().view).toMatchObject({
+      kind: "thread",
+      panes: ["unopened"],
+    });
+    expect(prepareThreadForPane).toHaveBeenCalledExactlyOnceWith("unopened");
   });
 });

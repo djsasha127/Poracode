@@ -228,12 +228,11 @@ export function resolveProviderDraftConfig(
   const nextEffort = resolveEffortValue(agent, nextModel, normalizedPreferred?.effort);
   const nextContext = resolveContextSizeValue(agent, nextModel, normalizedPreferred?.contextSize);
   const supportsFast = supportsUsableFastMode(agent.capabilities, nextModel);
-  // Fast mode is the composer's default for every model that can actually use
-  // it; only an explicitly saved `false` keeps it off. AI helpers (title/commit
-  // generation, schedules, PR automation) call `resolveFastValue` directly and
-  // keep their opt-in default, so background work doesn't silently spend fast
-  // requests.
-  const nextFast = resolveFastValue(agent, nextModel, normalizedPreferred?.fast ?? true);
+  // Codex starts in normal mode so a new model/profile does not silently spend
+  // fast requests. Preserve an explicit per-model choice in either direction.
+  // Other providers retain their existing composer default.
+  const defaultFast = baseAgentKind(agent.kind) !== "codex";
+  const nextFast = resolveFastValue(agent, nextModel, normalizedPreferred?.fast ?? defaultFast);
   // Thinking starts enabled for every model that offers the toggle. An
   // explicitly saved `false` remains authoritative.
   const nextThinking = resolveThinkingValue(

@@ -44,6 +44,20 @@ describe("resolveProviderDraftConfig fast mode", () => {
     expect(resolveProviderDraftConfig(agentWith(), { model: "fast-capable" }).fast).toBe(true);
   });
 
+  it("defaults Codex to normal mode when no Fast preference was saved", () => {
+    const codex = { ...agentWith(), kind: "codex", label: "Codex" };
+
+    expect(resolveProviderDraftConfig(codex, { model: "fast-capable" }).fast).toBe(false);
+  });
+
+  it("keeps an explicitly saved Codex Fast preference", () => {
+    const codex = { ...agentWith(), kind: "codex", label: "Codex" };
+
+    expect(resolveProviderDraftConfig(codex, { model: "fast-capable", fast: true }).fast).toBe(
+      true,
+    );
+  });
+
   it("keeps Fast off when the saved draft explicitly disabled it", () => {
     expect(
       resolveProviderDraftConfig(agentWith(), { model: "fast-capable", fast: false }).fast,

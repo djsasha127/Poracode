@@ -271,6 +271,9 @@ describe("buildSidebarProjectRows — See more cap (date sort)", () => {
     const visibleIds = threadRows(rows).map((r) => r.thread.id);
     expect(visibleIds).toHaveLength(10);
     expect(seeMore(rows)).toMatchObject({ hiddenCount: 3 });
+    expect(rows.findIndex((row) => row.kind === "see-more")).toBeLessThan(
+      rows.findIndex((row) => row.kind === "section-label"),
+    );
     expect(
       rows.find((row) => row.kind === "section-label")?.doneThreads.map((thread) => thread.id),
     ).toEqual(["done-0", "done-1", "done-2", "done-3", "done-4"]);

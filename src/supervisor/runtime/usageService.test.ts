@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CURSOR_API_KEY_EXCHANGE_ENDPOINT,
   CURSOR_PERIOD_USAGE_ENDPOINT,
@@ -11,7 +11,18 @@ import {
   type UsageSnapshot,
 } from "@poracode/agents-usage";
 import type { SupervisorEvent } from "@/shared/ipc";
+import { getUsageSecret } from "@/shared/usageSecretStore";
 import type { LocalUsageCollector } from "./localUsageCollectors";
+import type { UsageHistoryProvider } from "./usageHistoryProvider";
+
+// UsageService orchestration tests must not stream this developer machine's
+// multi-gigabyte provider transcript history. Scanner behavior has its own
+// filesystem fixtures in usageCostScanner.test.ts.
+vi.mock("./usageCostScanner", () => ({
+  scanClaudeCost: () => Promise.resolve({ estimate: undefined, truncated: false }),
+  scanCodexCost: () => Promise.resolve({ estimate: undefined, truncated: false }),
+}));
+
 import { UsageService } from "./usageService";
 
 const NOW = 1_700_000_000_000;
@@ -66,17 +77,87 @@ afterEach(() => {
 });
 
 describe("UsageService", () => {
-  it("discards older caches that still label the first-party window Auto + Composer", async () => {
+  it("dispatches paginated history without attaching the index to usage polls", async () => {
+    const digest = {
+      providerId: "fixture",
+      indexVersion: 1,
+      digest: "abc",
+      machine: "test",
+      uniqueSessions: 1,
+      candidateFiles: 1,
+      indexing: false,
+      sources: [],
+    };
+    const historyProvider: UsageHistoryProvider = {
+      providerId: "fixture",
+      getDigest: vi.fn<UsageHistoryProvider["getDigest"]>(() => Promise.resolve(digest)),
+      getPage: vi.fn<UsageHistoryProvider["getPage"]>(() =>
+        Promise.resolve({
+          digest: "abc",
+          sessions: [],
+        }),
+      ),
+      refresh: vi.fn<UsageHistoryProvider["refresh"]>(() => Promise.resolve(digest)),
+      getCachedAggregate: () => undefined,
+    };
+    const service = new UsageService({
+      emit: () => {},
+      cachePath: tempCachePath(),
+      host: makeHost({}),
+      providerIds: [],
+      localCollectors: [],
+      usageHistoryProviders: [historyProvider],
+    });
+
+    await expect(service.getUsageHistoryDigest({ providerId: "fixture" })).resolves.toEqual(digest);
+    await expect(
+      service.getUsageHistoryPage({ providerId: "fixture", cursor: "0", limit: 100 }),
+    ).resolves.toEqual({ digest: "abc", sessions: [] });
+    await expect(service.refreshUsageHistory({ providerId: "fixture" })).resolves.toEqual(digest);
+    await expect(service.getProviderUsage({})).resolves.toEqual({
+      snapshots: [],
+      fromCache: false,
+    });
+  });
+
+  it("seals a remotely submitted API key and rejects providers without API-key login", async () => {
+    const cacheDir = join(
+      tmpdir(),
+      `poracode-usage-secret-test-${process.pid}-${cachePaths.length}`,
+    );
+    cachePaths.push(cacheDir);
+    mkdirSync(cacheDir, { recursive: true });
+    const service = new UsageService({
+      emit: () => {},
+      cachePath: join(cacheDir, "provider-usage.json"),
+      cacheDir,
+      host: makeHost({}),
+      providerIds: ["kimi"],
+      localCollectors: stubLocalCollectors(),
+    });
+
+    await expect(
+      service.setProviderUsageApiKey({ providerId: "kimi", apiKey: "  kimi-test-key  " }),
+    ).resolves.toEqual({ ok: true });
+    expect(getUsageSecret(cacheDir, "kimi", "apiKey")).toBe("kimi-test-key");
+    await expect(
+      service.setProviderUsageApiKey({ providerId: "claude", apiKey: "not-supported" }),
+    ).resolves.toMatchObject({ ok: false });
+  });
+
+  it("discards the previous v8 cache so Codex history moves to the independent index", async () => {
     const cachePath = tempCachePath();
     writeFileSync(
       cachePath,
       JSON.stringify({
-        version: 4,
+        version: 8,
         snapshots: [
           {
-            providerId: "cursor",
+            providerId: "claude",
             status: "ok",
-            windows: [{ id: "cursor-auto", label: "Auto + Composer", usedPercent: 34 }],
+            windows: [{ id: "weekly", label: "Weekly", usedPercent: 34 }],
+            cost: { currency: "USD", amount: 12, period: "30d", estimated: true },
+            tokens: { total: 100, period: "30d" },
             fetchedAt: NOW,
           },
         ],
@@ -89,7 +170,7 @@ describe("UsageService", () => {
       localCollectors: stubLocalCollectors(),
     });
 
-    const result = await service.getProviderUsage({ providerIds: ["cursor"] });
+    const result = await service.getProviderUsage({ providerIds: ["claude"] });
     expect(result.fromCache).toBe(false);
     expect(result.snapshots).toEqual([]);
   });
