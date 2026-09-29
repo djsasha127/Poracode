@@ -492,7 +492,16 @@ export class CodexUsageHistoryIndex implements UsageHistoryProvider {
     const groups = new Map<string, IndexedFile[]>();
     for (const file of Object.values(this.index.files)) {
       const source = this.index.sources[file.sourceId];
-      if (!source?.enabled || (allowed && !allowed.has(file.sourceId))) continue;
+      // A parser migration rewrites the persistent index incrementally. Never
+      // mix stale aggregates with current ones while that background pass is in
+      // progress: old token totals can otherwise dominate the live Usage card.
+      if (
+        file.parserVersion !== CODEX_USAGE_HISTORY_PARSER_VERSION ||
+        !source?.enabled ||
+        (allowed && !allowed.has(file.sourceId))
+      ) {
+        continue;
+      }
       const group = groups.get(file.sessionId) ?? [];
       group.push(file);
       groups.set(file.sessionId, group);

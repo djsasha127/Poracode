@@ -447,8 +447,12 @@ describe("CodexUsageHistoryIndex", () => {
         reparsed += 1;
       },
     });
+    await restarted.getPage({ providerId: "codex" });
+    expect(restarted.getCachedAggregate()).toBeUndefined();
+
     await restarted.refresh({ providerId: "codex" });
     expect(reparsed).toBe(1);
+    expect((await restarted.getPage({ providerId: "codex" })).sessions).toHaveLength(1);
     const reparsedIndex = JSON.parse(await readFile(indexPath, "utf8")) as {
       files: Record<string, { parserVersion?: number }>;
     };
