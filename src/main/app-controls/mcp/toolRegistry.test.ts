@@ -600,6 +600,59 @@ describe("Poracode app control tools — threads", () => {
     });
   });
 
+  it("create_thread uses the target provider default without leaking source settings", async () => {
+    const source = makeThread({
+      id: "thread-1",
+      projectId: "project-9",
+      agentKind: "claude",
+      config: { model: "claude-opus-5-5", effort: "high", fast: true },
+    });
+    const projects = [
+      {
+        id: "project-9",
+        name: "Project Nine",
+        location: { kind: "posix", path: "/work/project-nine" },
+      } as Project,
+    ];
+    const agentStatuses: AgentStatusesResponse = {
+      windows: [
+        {
+          kind: "codex",
+          label: "Codex",
+          installed: true,
+          authState: "authenticated",
+          capabilities: {
+            models: [
+              { id: "gpt-6-astra", label: "GPT-6 Astra" },
+              { id: "gpt-6-sol", label: "GPT-6 Sol" },
+            ],
+          },
+        } as never,
+      ],
+      wsl: [],
+      fromCache: true,
+    };
+    const { ctx, createThread, supervisor } = context({
+      threads: [source],
+      projects,
+      agentStatuses,
+    });
+
+    await dispatchTool(
+      "create_thread",
+      { projectId: "project-9", prompt: "Do the thing", agentKind: "codex" },
+      ctx,
+    );
+
+    expect(supervisor.getAgentStatuses).toHaveBeenCalledWith({ wslDistros: [] });
+    expect(createThread).toHaveBeenCalledWith({
+      projectId: "project-9",
+      prompt: "Do the thing",
+      agentKind: "codex",
+      model: "gpt-6-astra",
+    });
+  });
+
   it("create_thread can put another account profile in the same project", async () => {
     const { ctx, createThread } = context();
     await dispatchTool(

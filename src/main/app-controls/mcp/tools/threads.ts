@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { getProjectAgentStatuses } from "@/shared/agentStatus";
+import { capabilitiesForPresentation } from "@/shared/agentSelection";
 import { stripAnsiPreservingLayout } from "@/shared/ansi";
 import { assistantDisplayText } from "@/shared/assistantMessageText";
 import type {
@@ -24,6 +26,7 @@ import { dbGetThreadConversationItemsPage } from "../../../db";
 import {
   assertNotSelf,
   projectIdProp,
+  requireProject,
   requireThread,
   threadIdProp,
   type AppControlsToolContext,
@@ -106,6 +109,28 @@ const rollbackArgsSchema = z.object({
   numTurns: z.number().int().min(1).max(ROLLBACK_MAX_TURNS),
 });
 
+async function resolveTargetDefaultModel(
+  ctx: AppControlsToolContext,
+  projectId: string,
+  agentKind: AgentKind,
+): Promise<string> {
+  const project = requireProject(ctx, projectId);
+  const wslDistros = project.location.kind === "wsl" ? [project.location.distro] : [];
+  const statuses = await ctx.supervisor.getAgentStatuses({ wslDistros });
+  const agents = getProjectAgentStatuses(project.location, statuses.windows, statuses.wsl);
+  const target = agents.find((status) => status.kind === agentKind);
+  const model = target
+    ? capabilitiesForPresentation(target.capabilities, "gui").models[0]?.id
+    : undefined;
+  if (!model) {
+    throw new Error(
+      `No default model is available for ${agentKind} in project ${projectId}. ` +
+        "Pass model explicitly or refresh the agent installation status.",
+    );
+  }
+  return model;
+}
+
 export const threadTools: ToolDomain = {
   specs: [
     {
@@ -157,7 +182,7 @@ export const threadTools: ToolDomain = {
     {
       name: "create_thread",
       description:
-        "Create and launch a new app thread in a project (visible in the user's sidebar). The calling thread's agent and model are used unless overridden. agentKind accepts a profile-qualified account such as `codex:work` or `claude:personal`; threads from different profiles can share the same project and exchange messages with send_to_thread. Optionally run it in a fresh git worktree. For Home threads, workspaceId files the new conversation into a workspace (id or unique name from list_workspaces); omitted Home threads inherit the calling thread's workspace when possible. Project threads follow their project's workspace — use update_project to file a project.",
+        "Create and launch a new app thread in a project (visible in the user's sidebar). The calling thread's agent, model, effort, and fast setting are inherited when agentKind is unchanged. When agentKind changes and model is omitted, Poracode uses the target agent's detected default model and its default effort/fast settings. agentKind accepts a profile-qualified account such as `codex:work` or `claude:personal`; threads from different profiles can share the same project and exchange messages with send_to_thread. Optionally run it in a fresh git worktree. For Home threads, workspaceId files the new conversation into a workspace (id or unique name from list_workspaces); omitted Home threads inherit the calling thread's workspace when possible. Project threads follow their project's workspace — use update_project to file a project.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -424,13 +449,19 @@ export const threadTools: ToolDomain = {
       const parsed = createArgsSchema.parse(args);
       const sourceThread = ctx.identity.threadId ? ctx.getThread(ctx.identity.threadId) : null;
       const agentKind: AgentKind | undefined = parsed.agentKind ?? sourceThread?.agentKind;
-      const model = parsed.model ?? sourceThread?.config.model;
-      if (!agentKind || !model) {
+      if (!agentKind) {
         throw new Error(
-          "agentKind and model are required when they can't be inherited from the calling thread.",
+          "agentKind is required when it can't be inherited from the calling thread.",
         );
       }
-      const effort = parsed.effort ?? sourceThread?.config.effort;
+      const inheritsSourceConfig = sourceThread?.agentKind === agentKind;
+      const model =
+        parsed.model ??
+        (inheritsSourceConfig
+          ? sourceThread.config.model
+          : await resolveTargetDefaultModel(ctx, parsed.projectId, agentKind));
+      const effort =
+        parsed.effort ?? (inheritsSourceConfig ? sourceThread?.config.effort : undefined);
       const homeThread = isHomeProjectId(parsed.projectId);
       if (parsed.workspaceId && !homeThread) {
         throw new Error(
@@ -448,7 +479,9 @@ export const threadTools: ToolDomain = {
         agentKind,
         model,
         ...(effort ? { effort } : {}),
-        ...(sourceThread?.config.fast !== undefined ? { fast: sourceThread.config.fast } : {}),
+        ...(inheritsSourceConfig && sourceThread?.config.fast !== undefined
+          ? { fast: sourceThread.config.fast }
+          : {}),
         ...(parsed.title ? { title: parsed.title } : {}),
         ...(workspaceId ? { workspaceId } : {}),
         ...(parsed.worktree?.enabled
