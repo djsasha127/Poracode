@@ -92,7 +92,10 @@ export const usageHistorySessionSummarySchema = z.object({
   sourceId: z.string(),
   machine: z.string(),
   fileSize: z.number().int().nonnegative(),
-  modifiedAt: z.number().int().nonnegative(),
+  // fs.stat().mtimeMs can contain fractional milliseconds on macOS. Treat it
+  // as an epoch timestamp, not an integer counter, so a valid remote page is
+  // not discarded by the desktop client.
+  modifiedAt: z.number().nonnegative(),
   fingerprint: z.string(),
   startedAt: z.number().int().nonnegative().optional(),
   tokens: usageTokensSchema,
