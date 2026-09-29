@@ -17,6 +17,7 @@ import { useUsageLoginStateStore } from "@/renderer/state/usageLoginStateStore";
 import { useSharedSettings } from "@/renderer/state/sharedSettingsStore";
 import { UsageProviderCard } from "./parts/UsageProviderCard";
 import { selectRecordedUsage } from "./recordedUsageSource";
+import { resolveUsageRemoteServerId } from "./usageRemoteServer";
 import type { TranslateFn } from "@/renderer/i18n/i18n";
 import type { ProfileTokenStats } from "@/shared/contracts";
 
@@ -35,7 +36,10 @@ function formatUpdatedAgo(fetchedAt: number, now: number, t: TranslateFn): strin
 
 export function UsagePanel(props: { onOpenUsageSettings?: (() => void) | undefined }) {
   const { t } = useLingui();
-  const remoteServerId = useCurrentRemoteServerId();
+  const currentRemoteServerId = useCurrentRemoteServerId();
+  const remoteServerId = useRemoteServersStore((state) =>
+    resolveUsageRemoteServerId(currentRemoteServerId, state.servers, state.runtime),
+  );
   const remoteSourceLabel = useRemoteServersStore((state) =>
     remoteServerId
       ? state.servers.find((server) => server.desktopId === remoteServerId)?.label
