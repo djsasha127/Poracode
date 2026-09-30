@@ -703,6 +703,97 @@ describe("MuseMspStructuredSession", () => {
     });
   });
 
+  it("accepts the durable end when a resumed head cursor belongs to an ephemeral event", async () => {
+    const { session, runtimeEvents, updates } = await createSession({
+      sessionRef: {
+        providerSessionId: "session-1",
+        discoveredAt: "2026-01-01T00:00:00Z",
+        providerCursor: "cursor-before-restart",
+      },
+    });
+    request.mockImplementation(async (method) => {
+      if (method === "session/resume") {
+        return { session: sessionRecord(), viewCursor: "cursor-ephemeral-head" };
+      }
+      if (method === "view/page") {
+        return {
+          events: [
+            {
+              method: "item/completed",
+              params: {
+                sessionId: "session-1",
+                viewCursor: "cursor-last-durable",
+                item: {
+                  itemId: "assistant-before-ephemeral-head",
+                  kind: "assistantMessage",
+                  status: "completed",
+                  text: "Recovered durable answer",
+                },
+              },
+            },
+          ],
+          nextCursor: null,
+        };
+      }
+      return { status: "accepted" };
+    });
+
+    await expect(session.openThread(config)).resolves.toBe("session-1");
+
+    expect(runtimeEvents).toContainEqual(
+      expect.objectContaining({
+        type: "item.started",
+        itemId: "assistant-before-ephemeral-head",
+      }),
+    );
+    expect(runtimeEvents).not.toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        message: expect.stringContaining("history recovery"),
+      }),
+    );
+    expect(updates.at(-1)).toMatchObject({
+      status: "idle",
+      attention: "none",
+      sessionRef: { providerCursor: "cursor-ephemeral-head" },
+    });
+  });
+
+  it("keeps a resumed live turn working when an old history cursor is unavailable", async () => {
+    const { session, runtimeEvents, updates } = await createSession({
+      sessionRef: {
+        providerSessionId: "session-1",
+        discoveredAt: "2026-01-01T00:00:00Z",
+        providerCursor: "cursor-pruned",
+      },
+    });
+    request.mockImplementation(async (method) => {
+      if (method === "session/resume") {
+        return {
+          session: { sessionId: "session-1", activeTurnId: "turn-live", status: "working" },
+          viewCursor: "cursor-live-head",
+        };
+      }
+      if (method === "view/page") throw new Error("cursor is no longer available");
+      return { status: "accepted" };
+    });
+
+    await expect(session.openThread(config)).resolves.toBe("session-1");
+
+    expect(runtimeEvents).toContainEqual(
+      expect.objectContaining({
+        type: "warning",
+        message: expect.stringContaining("re-anchored to the live session"),
+      }),
+    );
+    expect(runtimeEvents).not.toContainEqual(expect.objectContaining({ type: "error" }));
+    expect(updates.at(-1)).toMatchObject({
+      status: "working",
+      attention: "working",
+      sessionRef: { providerCursor: "cursor-live-head" },
+    });
+  });
+
   it("recovers a dropped terminal tail even when no later push reports a gap", async () => {
     vi.useFakeTimers();
     try {

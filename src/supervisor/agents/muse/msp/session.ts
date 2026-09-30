@@ -1128,7 +1128,15 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
 
       const nextPageCursor = stringValue(result["nextCursor"]);
       if (!nextPageCursor) {
-        throw new Error("Muse MSP view gap could not be filled to its upper cursor.");
+        // `view/page` contains durable notifications only, while a gap's
+        // upper cursor (and `session/read.viewCursor`) may name an ephemeral
+        // notification such as a streaming delta. Reaching the durable end
+        // therefore means every recoverable event was replayed even when the
+        // exact opaque upper cursor was not present in the page. Re-anchor to
+        // that observed live cursor so reconnects do not retry the same
+        // already-drained range forever.
+        this.lastViewCursor = recovery.nextCursor;
+        return;
       }
       if (nextPageCursor === cursor) {
         throw new Error("Muse MSP view gap paging did not advance.");
@@ -1146,15 +1154,21 @@ export class MuseMspStructuredSession implements StructuredSessionHandle {
   private failViewGapRecovery(recovery: MuseViewGapRecovery, error: unknown): void {
     if (this.disposed || this.viewGapRecovery !== recovery) return;
     this.viewGapRecovery = undefined;
+    // History replay is a repair path around an already-live provider
+    // session. A stale/pruned cursor or a transient page failure must not mark
+    // that live turn as failed: Muse can continue producing notifications and
+    // the renderer already owns the transcript up to its persisted cursor.
+    // Re-anchor to the host-observed upper cursor and keep consuming live
+    // events. Surface the loss as a warning so it remains diagnosable without
+    // turning a healthy provider process red.
+    this.lastViewCursor = recovery.nextCursor;
     this.emit({
-      type: "error",
+      type: "warning",
       threadId: this.input.threadId,
-      message: `Muse MSP history recovery failed: ${errorMessage(error)}`,
+      message: `Muse MSP skipped an unavailable history range and re-anchored to the live session: ${errorMessage(error)}`,
     });
-    this.status = "error";
-    this.attention = "none";
-    this.publishUpdate();
     this.drainBufferedNotifications(recovery.buffered);
+    if (!this.viewGapRecovery) this.resumeWorkingState();
   }
 
   private drainBufferedNotifications(notifications: readonly BufferedMuseNotification[]): void {
