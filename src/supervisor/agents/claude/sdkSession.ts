@@ -27,6 +27,7 @@ import type {
 import { areAgentSlashCommandsEqual } from "@/shared/contracts";
 import { terminateChildProcessTree } from "@/shared/processTree";
 import { buildClaudeMcpServers } from "../userMcp";
+import { shouldUseClaudeNativeChrome } from "./nativeChrome";
 import {
   createKnownSessionRef,
   getPrimedPosixEnv,
@@ -780,6 +781,11 @@ export class ClaudeSdkSession implements StructuredSessionHandle {
       }
       const mcpServers = buildClaudeMcpServers(this.input.mcpServers ?? []);
       const hasMcpServers = Object.keys(mcpServers).length > 0;
+      const useNativeChrome = shouldUseClaudeNativeChrome(
+        this.input.projectLocation,
+        this.currentConfig,
+        this.input.mcpServers ?? [],
+      );
       let spawnClaudeCodeProcess: ((spawnOptions: SpawnOptions) => SpawnedProcess) | undefined;
       switch (this.input.projectLocation.kind) {
         case "wsl": {
@@ -824,6 +830,7 @@ export class ClaudeSdkSession implements StructuredSessionHandle {
           : {}),
         ...(claudeExecutablePath ? { pathToClaudeCodeExecutable: claudeExecutablePath } : {}),
         ...(hasMcpServers ? ({ mcpServers } as Partial<ClaudeQueryOptions>) : {}),
+        ...(useNativeChrome ? { extraArgs: { chrome: null } } : {}),
         ...(spawnClaudeCodeProcess ? { spawnClaudeCodeProcess } : {}),
       };
 

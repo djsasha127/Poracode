@@ -338,4 +338,32 @@ describe("AppControlsMcpIngress", () => {
       effort: "high",
     });
   });
+
+  it("create_thread preserves the calling thread's browser tool choices", async () => {
+    const source = {
+      ...thread,
+      config: {
+        ...thread.config,
+        browserMcp: true,
+        computerUse: true,
+        chromeMcp: false,
+      },
+    } as Thread;
+    const d = deps({
+      getThread: (id) => (id === source.id ? source : null),
+      getThreads: () => [source],
+    });
+    ingress = new AppControlsMcpIngress(d);
+    const info = await ingress.start();
+
+    const { isError } = await callTool(info.url, info.token, "create_thread", {
+      projectId: "project-1",
+      prompt: "Inspect the browser flow",
+    });
+
+    expect(isError).toBe(false);
+    expect(d.createThread).toHaveBeenCalledWith(
+      expect.objectContaining({ browserMcp: true, computerUse: true, chromeMcp: false }),
+    );
+  });
 });

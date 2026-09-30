@@ -349,6 +349,46 @@ describe("ClaudeSdkSession", () => {
     await session.dispose();
   });
 
+  it("falls back to Claude in Chrome when a remote host has no Poracode Chrome endpoint", async () => {
+    const fake = createFakeQuery();
+    mockSdk.query.mockReturnValue(fake.runtime);
+    const chromeConfig: ThreadConfig = { model: "sonnet", chromeMcp: true };
+    const session = await ClaudeSdkSession.create({
+      threadId: "thread-claude-native-chrome",
+      projectLocation,
+      config: chromeConfig,
+      presentationMode: "gui",
+      mcpServers: [
+        {
+          id: "app-controls",
+          name: "poracode",
+          timeoutMs: 30_000,
+          transport: {
+            type: "http",
+            url: "http://127.0.0.1:9100/mcp",
+            headers: { Authorization: "Bearer test" },
+          },
+        },
+      ],
+    });
+    session.setListener({
+      onRuntimeEvent: () => {},
+      onUpdate: () => {},
+      onError: () => {},
+      onClose: () => {},
+    });
+
+    await session.openThread(chromeConfig);
+
+    expect(mockSdk.query).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ extraArgs: { chrome: null } }),
+      }),
+    );
+
+    await session.dispose();
+  });
+
   it("force-kills the spawned process tree on dispose", async () => {
     const fake = createFakeQuery();
     mockSdk.query.mockReturnValue(fake.runtime);

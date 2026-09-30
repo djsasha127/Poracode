@@ -57,6 +57,9 @@ export interface CreateAppThreadRequest {
   model: string;
   effort?: string;
   fast?: boolean;
+  browserMcp?: boolean;
+  computerUse?: boolean;
+  chromeMcp?: boolean;
   title?: string;
   worktree?: { branch?: string };
   existingWorktree?: { path: string; branch: string };
@@ -114,6 +117,9 @@ export async function createAppThread(
     model: request.model,
     ...(request.effort ? { effort: request.effort } : {}),
     ...(request.fast !== undefined ? { fast: request.fast } : {}),
+    ...(request.browserMcp !== undefined ? { browserMcp: request.browserMcp } : {}),
+    ...(request.computerUse !== undefined ? { computerUse: request.computerUse } : {}),
+    ...(request.chromeMcp !== undefined ? { chromeMcp: request.chromeMcp } : {}),
     ...(await resolveUnrestrictedThreadPermissions(
       deps.getAgentStatuses,
       request.agentKind,

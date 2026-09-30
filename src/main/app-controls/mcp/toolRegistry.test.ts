@@ -600,6 +600,59 @@ describe("Poracode app control tools — threads", () => {
     });
   });
 
+  it("create_thread inherits browser access even when the target provider changes", async () => {
+    const source = makeThread({
+      id: "thread-1",
+      projectId: "project-9",
+      agentKind: "claude",
+      config: {
+        model: "claude-opus-5-5",
+        browserMcp: true,
+        computerUse: false,
+        chromeMcp: true,
+      },
+    });
+    const projects = [
+      {
+        id: "project-9",
+        name: "Project Nine",
+        location: { kind: "posix", path: "/work/project-nine" },
+      } as Project,
+    ];
+    const agentStatuses: AgentStatusesResponse = {
+      windows: [
+        {
+          kind: "codex",
+          label: "Codex",
+          installed: true,
+          authState: "authenticated",
+          capabilities: { models: [{ id: "gpt-6-sol", label: "GPT-6 Sol" }] },
+        } as never,
+      ],
+      wsl: [],
+      fromCache: true,
+    };
+    const { ctx, createThread } = context({
+      threads: [source],
+      projects,
+      agentStatuses,
+    });
+
+    await dispatchTool(
+      "create_thread",
+      { projectId: "project-9", prompt: "Review visually", agentKind: "codex" },
+      ctx,
+    );
+
+    expect(createThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        browserMcp: true,
+        computerUse: false,
+        chromeMcp: true,
+      }),
+    );
+  });
+
   it("create_thread uses the target provider default without leaking source settings", async () => {
     const source = makeThread({
       id: "thread-1",

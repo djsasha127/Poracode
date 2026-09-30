@@ -8,6 +8,7 @@ import type {
   ClaudeProfileModel,
   ProjectLocation,
   PromptSegment,
+  ThreadConfig,
 } from "@/shared/contracts";
 import { claudeProfileKind, parseClaudeProfileInstanceConfig } from "@/shared/contracts";
 import { inlinePromptSegmentText } from "@/shared/promptContent";
@@ -32,6 +33,7 @@ import { ClaudeSdkSession } from "./sdkSession";
 import { createClaudeSessionImport } from "./sessionImport";
 import { resolveNativeTildePath } from "../base/sessionFs";
 import { claudeMcpLaunch } from "./mcp";
+import { shouldUseClaudeNativeChrome } from "./nativeChrome";
 import { resolveInstallNodePath, warnIfPluginManifestMissing } from "../plugin/installerBase";
 import {
   getClaudePluginPaths,
@@ -354,7 +356,9 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): AgentAd
     buildLaunchArgv(location, config, prompt, _sessionRef, launchOptions) {
       const assignedId = randomUUID();
       const args = buildClaudeArgs(config, prompt, undefined, assignedId);
-      const mcp = claudeMcpLaunch(location, launchOptions?.mcpServers);
+      const mcpServers = launchOptions?.mcpServers ?? [];
+      const mcp = claudeMcpLaunch(location, mcpServers);
+      appendClaudeNativeChromeArg(mcp.args, location, config, mcpServers);
       args.splice(claudeExtraArgsPosition(args, prompt), 0, ...mcp.args);
       const env = profileEnv(location);
       return {
@@ -367,7 +371,9 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): AgentAd
     },
     buildResumeArgv(location, config, prompt, sessionRef, launchOptions) {
       const args = buildClaudeArgs(config, prompt, sessionRef.providerSessionId);
-      const mcp = claudeMcpLaunch(location, launchOptions?.mcpServers);
+      const mcpServers = launchOptions?.mcpServers ?? [];
+      const mcp = claudeMcpLaunch(location, mcpServers);
+      appendClaudeNativeChromeArg(mcp.args, location, config, mcpServers);
       args.splice(claudeExtraArgsPosition(args, prompt), 0, ...mcp.args);
       const env = profileEnv(location);
       return { ...mcp, binary: "claude", args, ...(env ? { env } : {}) };
@@ -470,4 +476,15 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): AgentAd
       };
     },
   };
+}
+
+function appendClaudeNativeChromeArg(
+  extraArgs: string[],
+  location: ProjectLocation,
+  config: ThreadConfig,
+  servers: Parameters<typeof shouldUseClaudeNativeChrome>[2],
+): void {
+  if (!shouldUseClaudeNativeChrome(location, config, servers)) return;
+  const separator = extraArgs.at(-1) === "--" ? extraArgs.length - 1 : extraArgs.length;
+  extraArgs.splice(separator, 0, "--chrome");
 }

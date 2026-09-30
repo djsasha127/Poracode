@@ -182,7 +182,7 @@ export const threadTools: ToolDomain = {
     {
       name: "create_thread",
       description:
-        "Create and launch a new app thread in a project (visible in the user's sidebar). The calling thread's agent, model, effort, and fast setting are inherited when agentKind is unchanged. When agentKind changes and model is omitted, Poracode uses the target agent's detected default model and its default effort/fast settings. agentKind accepts a profile-qualified account such as `codex:work` or `claude:personal`; threads from different profiles can share the same project and exchange messages with send_to_thread. Optionally run it in a fresh git worktree. For Home threads, workspaceId files the new conversation into a workspace (id or unique name from list_workspaces); omitted Home threads inherit the calling thread's workspace when possible. Project threads follow their project's workspace — use update_project to file a project.",
+        "Create and launch a new app thread in a project (visible in the user's sidebar). The calling thread's browser, Chrome, and computer-use access are inherited. Its agent, model, effort, and fast setting are inherited when agentKind is unchanged. When agentKind changes and model is omitted, Poracode uses the target agent's detected default model and its default effort/fast settings. agentKind accepts a profile-qualified account such as `codex:work` or `claude:personal`; threads from different profiles can share the same project and exchange messages with send_to_thread. Optionally run it in a fresh git worktree. For Home threads, workspaceId files the new conversation into a workspace (id or unique name from list_workspaces); omitted Home threads inherit the calling thread's workspace when possible. Project threads follow their project's workspace — use update_project to file a project.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -481,6 +481,15 @@ export const threadTools: ToolDomain = {
         ...(effort ? { effort } : {}),
         ...(inheritsSourceConfig && sourceThread?.config.fast !== undefined
           ? { fast: sourceThread.config.fast }
+          : {}),
+        ...(sourceThread?.config.browserMcp !== undefined
+          ? { browserMcp: sourceThread.config.browserMcp }
+          : {}),
+        ...(sourceThread?.config.computerUse !== undefined
+          ? { computerUse: sourceThread.config.computerUse }
+          : {}),
+        ...(sourceThread?.config.chromeMcp !== undefined
+          ? { chromeMcp: sourceThread.config.chromeMcp }
           : {}),
         ...(parsed.title ? { title: parsed.title } : {}),
         ...(workspaceId ? { workspaceId } : {}),

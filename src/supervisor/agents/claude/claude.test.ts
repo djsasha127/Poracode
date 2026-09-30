@@ -180,6 +180,71 @@ describe("createClaudeAdapter structured sessions", () => {
   });
 });
 
+describe("createClaudeAdapter Chrome launch fallback", () => {
+  const projectLocation: ProjectLocation = { kind: "posix", path: "/repo" };
+
+  it("uses Claude's native Chrome bridge when the thread opted in but Poracode has no Chrome endpoint", () => {
+    const adapter = createClaudeAdapter();
+    const launch = adapter.buildLaunchArgv(
+      projectLocation,
+      { model: "sonnet", chromeMcp: true },
+      "Inspect the signed-in page",
+      undefined,
+      { mcpServers: [] },
+    );
+
+    expect(launch.args).toContain("--chrome");
+    expect(launch.args.indexOf("--chrome")).toBeLessThan(
+      launch.args.indexOf("Inspect the signed-in page"),
+    );
+  });
+
+  it("does not attach the native bridge when Poracode's Chrome MCP resolved", () => {
+    const adapter = createClaudeAdapter();
+    const launch = adapter.buildLaunchArgv(
+      projectLocation,
+      { model: "sonnet", chromeMcp: true },
+      "Inspect the signed-in page",
+      undefined,
+      {
+        mcpServers: [
+          {
+            id: "chrome",
+            name: "chrome",
+            timeoutMs: 30_000,
+            transport: {
+              type: "http",
+              url: "http://127.0.0.1:9000/mcp",
+              headers: { Authorization: "Bearer test" },
+            },
+          },
+        ],
+      },
+    );
+
+    expect(launch.args).not.toContain("--chrome");
+    expect(launch.args).toContain("--mcp-config");
+  });
+
+  it("does not advertise the host-native Chrome bridge inside WSL", () => {
+    const adapter = createClaudeAdapter();
+    const launch = adapter.buildLaunchArgv(
+      {
+        kind: "wsl",
+        distro: "Ubuntu",
+        linuxPath: "/home/demo/repo",
+        uncPath: "\\\\wsl.localhost\\Ubuntu\\home\\demo\\repo",
+      },
+      { model: "sonnet", chromeMcp: true },
+      "Inspect the signed-in page",
+      undefined,
+      { mcpServers: [] },
+    );
+
+    expect(launch.args).not.toContain("--chrome");
+  });
+});
+
 describe("claudeCapabilities", () => {
   it("surfaces Fable 5 with frontier effort tiers", () => {
     expect(claudeCapabilities.models).toContainEqual({
