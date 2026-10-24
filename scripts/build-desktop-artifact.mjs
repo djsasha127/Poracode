@@ -463,6 +463,8 @@ function buildElectronBuilderConfig(macArtifactKind = "branded") {
   const publishChannelLine = updaterChannel ? `\n  channel: ${updaterChannel}` : "";
   const macEntitlements = "build/entitlements.mac.plist";
   const macEntitlementsInherit = "build/entitlements.mac.plist";
+  const macIdentity = process.env.PORACODE_MAC_IDENTITY?.trim();
+  const macIdentityLine = macIdentity ? `\n  identity: ${JSON.stringify(macIdentity)}` : "";
   const packagedDistFilesYaml = PACKAGED_DIST_FILES.map((glob) =>
     glob.startsWith("!") ? `  - "${glob}"` : `  - ${glob}`,
   ).join("\n");
@@ -570,6 +572,7 @@ linux:
 mac:
   minimumSystemVersion: "13.0.0"
   executableName: ${macExecutableName}
+  ${macIdentityLine.trimStart()}
   target:
     - target: dmg
       arch:
