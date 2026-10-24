@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -234,11 +234,15 @@ describe("ThreadSessionManager resume launch with a pending prompt", () => {
     const events: SupervisorEvent[] = [];
     const structured = createStructuredSession();
     const manager = createManager(createAdapter(structured.handle), events);
+    const tempDir = mkdtempSync(join(tmpdir(), "poracode-resume-attachment-"));
+    tempDirs.push(tempDir);
+    const attachmentPath = join(tempDir, "shot.png");
+    writeFileSync(attachmentPath, "fixture");
     const segments: PromptSegment[] = [
       { kind: "text", content: "what is in " },
       {
         kind: "attachment",
-        path: "C:\\repo\\shot.png",
+        path: attachmentPath,
         mimeType: "image/png",
       },
     ];
@@ -255,7 +259,7 @@ describe("ThreadSessionManager resume launch with a pending prompt", () => {
     const [, , turnSegments, options] = structured.startTurn.mock.calls[0]!;
     expect(turnSegments).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ kind: "attachment", path: "C:\\repo\\shot.png" }),
+        expect.objectContaining({ kind: "attachment", path: attachmentPath }),
       ]),
     );
     expect(options).toEqual({ userMessageItemId: "user-with-attachment" });

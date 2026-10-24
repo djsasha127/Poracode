@@ -190,7 +190,7 @@ describe("buildSidebarProjectRows — See more cap (date sort)", () => {
     ]);
   });
 
-  it("hides done threads behind See more before live ones in manual mode", () => {
+  it("keeps See more above the Done section in manual mode", () => {
     const rows = build(
       [
         ...Array.from({ length: 3 }, (_, i) => makeThread({ id: `done-${i}`, done: true })),
@@ -205,9 +205,9 @@ describe("buildSidebarProjectRows — See more cap (date sort)", () => {
       "live-0",
       "live-1",
       "live-2",
+      "see-more",
       "section-label",
       "done-0",
-      "see-more",
     ]);
   });
 

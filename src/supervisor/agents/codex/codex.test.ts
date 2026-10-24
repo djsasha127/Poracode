@@ -886,6 +886,7 @@ describe("CodexSubAgentRouter", () => {
         type: "usage.spent",
         threadId: "local-thread",
         usage: {
+          breakdown: { input: 900, output: 100, cacheRead: 0 },
           counterKind: "cumulative",
           counter: 1_000,
           scopeId: "child-thread",
@@ -1606,6 +1607,7 @@ describe("CodexStructuredSession", () => {
       type: "usage.spent",
       threadId: "local-thread",
       usage: {
+        breakdown: { input: 4_800, output: 200, cacheRead: 0 },
         counterKind: "cumulative",
         counter: 5_000,
         scopeId: "forked-thread",

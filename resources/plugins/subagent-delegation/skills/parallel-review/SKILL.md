@@ -23,7 +23,7 @@ you already believe will agree with you.
 
 Keep review lanes read-only. Reviewers report; they do not edit the tree, and their prompt must not authorize writes.
 
-Submit the lanes together in one `delegate_agent` call so they actually run in parallel, and tag them for review so
+Submit the lanes together in one `spawn_agent` call so they actually run in parallel, and tag them for review so
 routing can pick suitable providers.
 
 ## Reconcile what returns

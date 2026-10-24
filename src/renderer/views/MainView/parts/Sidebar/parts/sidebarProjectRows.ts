@@ -336,9 +336,10 @@ function pushListSections(
   };
 
   input.pushEntries(liveVisible, 0, "live");
-  // A main-list pager that covers no done entries goes above the Done header,
-  // so it doesn't read as part of Done.
-  if (!doneSharesMainPage) pushMainSeeMore();
+  // Keep the main pager above Done even when expanded Done entries share its
+  // page. This preserves the compact sidebar hierarchy: live chats, See more,
+  // then Done.
+  pushMainSeeMore();
   // The header carries the toggle, so it stays even when "See more" hides every done entry.
   if (doneEntries.length > 0) {
     const allDoneThreads = doneEntries.flatMap((entry) =>
@@ -361,9 +362,7 @@ function pushListSections(
     });
   }
   input.pushEntries(doneVisible, liveVisible.length, "done");
-  if (doneSharesMainPage) {
-    pushMainSeeMore();
-  } else if (donePage.hiddenCount > 0) {
+  if (!doneSharesMainPage && donePage.hiddenCount > 0) {
     rows.push({
       kind: "see-more",
       key: "done-see-more",

@@ -380,7 +380,9 @@ export class SteerCoordinator {
     if (!usesStructuredFlow || !session.structuredSession?.startTurn) {
       throw new Error("Thread does not support structured turns.");
     }
-    const preparedSegments = await prepareStructuredAttachmentSegments(payload.segments);
+    const preparedSegments = payload.segments
+      ? await prepareStructuredAttachmentSegments(payload.segments)
+      : undefined;
     const effectiveSegments = preparedSegments
       ? await rewriteSegmentsForWsl(preparedSegments, session.projectLocation, {
           preserveImageAttachments:

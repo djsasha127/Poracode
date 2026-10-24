@@ -120,12 +120,16 @@ describe("ThreadSessionManager.stageThreadInput", () => {
     const manager = createManager(adapter);
     const write = vi.fn<(data: string) => void>();
     manager.sessions.set(THREAD_ID, createSession(adapter, write));
+    const tempDir = mkdtempSync(join(tmpdir(), "poracode-stage-input-"));
+    tempDirs.push(tempDir);
+    const attachmentPath = join(tempDir, "shot.png");
+    writeFileSync(attachmentPath, "fixture");
 
     await manager.stageThreadInput({
       threadId: THREAD_ID,
       prompt: "Selected element `button.cta` from https://x.test",
       segments: [
-        { kind: "attachment", path: "/var/tmp/lc/shot.png", mimeType: "image/png" },
+        { kind: "attachment", path: attachmentPath, mimeType: "image/png" },
         {
           kind: "text",
           content: "\n\nSelected element `button.cta` from https://x.test\n",
@@ -138,7 +142,7 @@ describe("ThreadSessionManager.stageThreadInput", () => {
     // No newline — a bare \n would submit the line in most shells/TUIs.
     expect(written).not.toContain("\n");
     expect(written).toContain("Selected element `button.cta` from https://x.test");
-    expect(written).toContain("@/var/tmp/lc/shot.png");
+    expect(written).toContain(`@${attachmentPath}`);
   });
 
   it("rejects for a structured (GUI / server) thread", async () => {

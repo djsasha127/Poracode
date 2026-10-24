@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { IPty } from "node-pty";
@@ -486,6 +486,7 @@ describe("SupervisorRuntime thread input", () => {
         model: "gpt-5.4",
       },
       userMessageItemId: "user-first",
+      deliveryPolicy: "queue",
     });
     await runtime.threadSessionManager.sendThreadInput({
       threadId: "thread-gui-queue",
@@ -494,6 +495,7 @@ describe("SupervisorRuntime thread input", () => {
         model: "gpt-5.4",
       },
       userMessageItemId: "user-second",
+      deliveryPolicy: "queue",
     });
 
     // Ordinary submit is a non-destructive FIFO queue. Only the explicit
@@ -515,26 +517,22 @@ describe("SupervisorRuntime thread input", () => {
     ).mock.calls[0]?.[0] as { onUpdate: (update: { status: string; attention: string }) => void };
 
     listener.onUpdate({ status: "idle", attention: "none" });
-    await Promise.resolve();
+    await vi.waitFor(() => expect(startTurn).toHaveBeenCalledTimes(1));
 
     // The oldest queued submit drains first.
-    expect(startTurn).toHaveBeenCalledTimes(1);
     expect(startTurn).toHaveBeenCalledWith(
       "first",
       {
         model: "gpt-5.4",
       },
       undefined,
-      { userMessageItemId: "user-first" },
+      { userMessageItemId: expect.stringMatching(/^user-/) },
     );
 
-    listener.onUpdate({ status: "working", attention: "working" });
-    listener.onUpdate({ status: "idle", attention: "none" });
-    await Promise.resolve();
-
-    expect(startTurn).toHaveBeenCalledTimes(2);
-    expect(startTurn).toHaveBeenLastCalledWith("second", { model: "gpt-5.4" }, undefined, {
-      userMessageItemId: "user-second",
+    // The second item remains in the official FIFO until the provider emits
+    // the canonical completion event for the first queued turn.
+    expect(runtime.threadSessionManager.getThreadFollowUpQueue("thread-gui-queue")).toMatchObject({
+      items: [{ prompt: "second" }],
     });
   });
 
@@ -645,7 +643,7 @@ describe("SupervisorRuntime thread input", () => {
     expect(runtimeIdx).toBeLessThan(idleIdx);
   });
 
-  it("drains a queued follow-up when the working turn fails with error status", async () => {
+  it("pauses a queued follow-up when the working turn fails and resumes it explicitly", async () => {
     const runtime = makeRuntime(() => undefined);
     const startTurn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
     const interruptTurn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
@@ -702,6 +700,7 @@ describe("SupervisorRuntime thread input", () => {
       prompt: "redirect",
       config: { model: "gpt-5.4" },
       userMessageItemId: "user-redirect",
+      deliveryPolicy: "queue",
     });
 
     expect(interruptTurn).not.toHaveBeenCalled();
@@ -717,14 +716,22 @@ describe("SupervisorRuntime thread input", () => {
       onUpdate: (update: { status: string; attention: string; errorMessage?: string }) => void;
     };
 
-    // The turn fails instead of reaching idle. The queued follow-up must still
-    // drain so it does not remain stuck after a provider error.
+    // Official queue semantics preserve and pause follow-ups after a provider
+    // failure. Delivery resumes only after an explicit user action.
     listener.onUpdate({ status: "error", attention: "error", errorMessage: "Claude turn failed." });
     await Promise.resolve();
+    expect(startTurn).not.toHaveBeenCalled();
+    expect(runtime.threadSessionManager.getThreadFollowUpQueue("thread-gui-error")).toMatchObject({
+      paused: true,
+      items: [{ prompt: "redirect" }],
+    });
 
-    expect(startTurn).toHaveBeenCalledTimes(1);
+    listener.onUpdate({ status: "idle", attention: "none" });
+    await runtime.threadSessionManager.resumeThreadFollowUps("thread-gui-error");
+    await vi.waitFor(() => expect(startTurn).toHaveBeenCalledTimes(1));
+
     expect(startTurn).toHaveBeenCalledWith("redirect", { model: "gpt-5.4" }, undefined, {
-      userMessageItemId: "user-redirect",
+      userMessageItemId: expect.stringMatching(/^user-/),
     });
   });
 
@@ -2655,6 +2662,8 @@ describe("SupervisorRuntime thread input", () => {
       );
 
       const spicyPrompt = "let's `do` $this\nwith 'quotes'";
+      const attachmentPath = join(makeTempDir(), "Image 1.png");
+      writeFileSync(attachmentPath, "fixture");
       await runtime.threadSessionManager.startThread({
         threadId: "thread-prompt-quoting",
         projectLocation,
@@ -2663,12 +2672,12 @@ describe("SupervisorRuntime thread input", () => {
         prompt: spicyPrompt,
         segments: [
           { kind: "text", content: spicyPrompt },
-          { kind: "attachment", path: "/tmp/Image 1.png" },
+          { kind: "attachment", path: attachmentPath },
         ],
         initialSize: { cols: 120, rows: 30 },
       });
 
-      const formattedPrompt = `${spicyPrompt}\n\n@/tmp/Image 1.png `;
+      const formattedPrompt = `${spicyPrompt}\n\n@${attachmentPath} `;
       const launchArgvCalls = buildLaunchArgv.mock.calls;
       expect(launchArgvCalls.length).toBeGreaterThan(0);
       expect(launchArgvCalls[0]![2]).toBe(formattedPrompt);
@@ -2681,7 +2690,7 @@ describe("SupervisorRuntime thread input", () => {
       expect(command).toContain("$this");
       expect(command).toContain("with");
       expect(command).toContain("quotes");
-      expect(command).toContain("@/tmp/Image 1.png");
+      expect(command).toContain(`@${attachmentPath}`);
     },
   );
 

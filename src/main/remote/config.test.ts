@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_REMOTE_ACCESS_HOST,
   DEFAULT_REMOTE_ACCESS_PORT,
@@ -17,10 +17,15 @@ const ENV_KEYS = [
   "PORACODE_REMOTE_ACCESS_PORT",
 ] as const;
 
-afterEach(() => {
+function clearRemoteAccessEnv(): void {
   for (const key of ENV_KEYS) {
     delete process.env[key];
   }
+}
+
+beforeEach(clearRemoteAccessEnv);
+afterEach(() => {
+  clearRemoteAccessEnv();
 });
 
 function ipv4(address: string, internal = false) {
