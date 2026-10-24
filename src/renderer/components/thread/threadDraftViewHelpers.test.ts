@@ -5,6 +5,7 @@ import type { AgentCapability, AgentStatus } from "@/shared/contracts";
 import {
   resolveApprovalPolicyValue,
   resolveFastValue,
+  resolvePreferredAgentKind,
   resolveProviderDraftConfig,
   resolveSavedProviderDraftConfig,
   resolveThinkingValue,
@@ -96,6 +97,31 @@ describe("resolveProviderDraftConfig fast mode", () => {
       fast: true,
       thinking: true,
     });
+  });
+});
+
+describe("resolvePreferredAgentKind", () => {
+  it("does not strand a new draft on an unauthenticated saved provider", () => {
+    const muse = {
+      ...agentWith(),
+      kind: "muse",
+      label: "Muse Code",
+      authState: "missing" as const,
+    };
+    const codex = { ...agentWith(), kind: "codex", label: "Codex" };
+
+    expect(
+      resolvePreferredAgentKind([muse, codex], { agentKind: "muse", model: "muse-spark-1.3" }),
+    ).toBe("codex");
+  });
+
+  it("keeps an authenticated saved provider", () => {
+    const claude = { ...agentWith(), kind: "claude", label: "Claude Code" };
+    const codex = { ...agentWith(), kind: "codex", label: "Codex" };
+
+    expect(
+      resolvePreferredAgentKind([claude, codex], { agentKind: "claude", model: "claude-sonnet" }),
+    ).toBe("claude");
   });
 });
 

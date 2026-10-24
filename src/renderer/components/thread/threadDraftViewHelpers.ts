@@ -40,11 +40,28 @@ export function resolvePreferredAgentKind(
 ): AgentStatus["kind"] | undefined {
   if (lastDraftConfig) {
     const savedAgent = installedAgents.find((agent) => agent.kind === lastDraftConfig.agentKind);
-    if (savedAgent) {
+    // A project can remember a provider that is installed but no longer
+    // authenticated (for example Muse after its login expired). Do not strand
+    // a fresh draft on that provider when another provider can start now.
+    if (savedAgent?.authState === "authenticated") {
       return savedAgent.kind;
     }
   }
 
+  // Codex is the stable default for this build when the saved project provider
+  // is unavailable. Keep the preference deterministic rather than depending on
+  // the order in which remote agent detection happened to finish.
+  const authenticated = installedAgents.filter((agent) => agent.authState === "authenticated");
+  const authenticatedCodex = authenticated.find((agent) => baseAgentKind(agent.kind) === "codex");
+  if (authenticatedCodex) return authenticatedCodex.kind;
+  if (authenticated.length > 0) return authenticated[0]!.kind;
+
+  // If nothing is authenticated yet, preserve the old behavior so the auth
+  // dock can still offer login for the remembered provider.
+  const savedAgent = lastDraftConfig
+    ? installedAgents.find((agent) => agent.kind === lastDraftConfig.agentKind)
+    : undefined;
+  if (savedAgent) return savedAgent.kind;
   return installedAgents[0]?.kind;
 }
 
