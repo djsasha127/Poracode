@@ -39,14 +39,14 @@ describe("LAUNCH_REMOTE_SERVER_SCRIPT", () => {
     expect(LAUNCH_REMOTE_SERVER_SCRIPT).toContain(
       '[ "$CURRENT_RUNTIME" = "$RUNTIME_HASH" ] || [ "$ACTUAL_RUNTIME" = "$RUNTIME_HASH" ]',
     );
-    expect(LAUNCH_REMOTE_SERVER_SCRIPT).toContain('server_ready "$PORT" "$APP_VERSION" 1');
+    expect(LAUNCH_REMOTE_SERVER_SCRIPT).toContain('server_ready "$PORT" "$APP_VERSION"; then');
   });
 
   it("defers a compatible helper upgrade while remote threads are active", () => {
     expect(LAUNCH_REMOTE_SERVER_SCRIPT).toContain("server_has_active_threads()");
     expect(LAUNCH_REMOTE_SERVER_SCRIPT).toContain("status in ('working','starting','queued')");
     expect(LAUNCH_REMOTE_SERVER_SCRIPT).toContain(
-      'server_ready "$PORT" "$APP_VERSION" 1 0 && server_has_active_threads',
+      'server_ready "$PORT" "$APP_VERSION" 0 && server_has_active_threads',
     );
     expect(LAUNCH_REMOTE_SERVER_SCRIPT).toContain('if [ "$REUSE_SERVER" = "1" ]');
   });

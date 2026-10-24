@@ -31,7 +31,7 @@ export function SidebarExternalSessions(props: { fallbackProjectId?: string }) {
   useEffect(() => {
     let cancelled = false;
     void readBridge()
-      .listImportableSessions({ limit: SIDEBAR_SESSION_LIMIT })
+      .listImportableSessions({})
       .then((result) => {
         if (!cancelled && !result.superseded) setSessions(result.sessions);
       })

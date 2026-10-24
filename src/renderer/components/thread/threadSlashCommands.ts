@@ -221,13 +221,11 @@ export function resolveAvailableSlashCommands(
   if (context) {
     const registration = activeGuiSlashCommands(context);
     if (registration) {
-      return [
-        ...registration.buildCommands({
-          hasEffort: context.hasEffort ?? false,
-          supportsFast: context.supportsFast ?? false,
-        }),
-        ...skills,
-      ];
+      const localCommands = registration.buildCommands({
+        hasEffort: context.hasEffort ?? false,
+        supportsFast: context.supportsFast ?? false,
+      });
+      return [...dedupeBaseCommands(localCommands, skills), ...skills];
     }
   }
   const base = threadCommands ?? capabilityCommands ?? EMPTY_SLASH_COMMANDS;

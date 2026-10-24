@@ -469,14 +469,16 @@ describe("ThreadSessionManager steer capability", () => {
       threadId: THREAD_ID,
       prompt: "steer me",
       config: { model: `${AGENT_KIND}/model` },
+      deliveryPolicy: "queue",
     });
     await manager.sendThreadInput({
       threadId: THREAD_ID,
       prompt: "then this",
       config: { model: `${AGENT_KIND}/model` },
+      deliveryPolicy: "queue",
     });
 
-    expect(session.queuedStructuredTurns?.map((turn) => turn.prompt)).toEqual([
+    expect(manager.getThreadFollowUpQueue(THREAD_ID)?.items.map((turn) => turn.prompt)).toEqual([
       "steer me",
       "then this",
     ]);
@@ -496,9 +498,12 @@ describe("ThreadSessionManager steer capability", () => {
       threadId: THREAD_ID,
       prompt: "steer me",
       config: { model: `${AGENT_KIND}/model` },
+      deliveryPolicy: "queue",
     });
 
-    expect(session.queuedStructuredTurns?.map((turn) => turn.prompt)).toEqual(["steer me"]);
+    expect(manager.getThreadFollowUpQueue(THREAD_ID)?.items.map((turn) => turn.prompt)).toEqual([
+      "steer me",
+    ]);
     expect(structuredSession.interruptTurn).not.toHaveBeenCalled();
     expect(structuredSession.startTurn).not.toHaveBeenCalled();
   });
@@ -518,7 +523,7 @@ describe("ThreadSessionManager steer capability", () => {
     });
 
     expect(structuredSession.steerTurn).toHaveBeenCalledTimes(1);
-    expect(session.queuedStructuredTurns).toBeUndefined();
+    expect(manager.getThreadFollowUpQueue(THREAD_ID)).toBeNull();
     expect(structuredSession.interruptTurn).not.toHaveBeenCalled();
   });
 
@@ -536,7 +541,9 @@ describe("ThreadSessionManager steer capability", () => {
       deliveryPolicy: "auto",
     });
 
-    expect(session.queuedStructuredTurns?.map((turn) => turn.prompt)).toEqual(["new evidence"]);
+    expect(manager.getThreadFollowUpQueue(THREAD_ID)?.items.map((turn) => turn.prompt)).toEqual([
+      "new evidence",
+    ]);
     expect(structuredSession.interruptTurn).not.toHaveBeenCalled();
   });
 

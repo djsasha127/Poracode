@@ -1,8 +1,5 @@
 import { z } from "zod";
 
-export const importedSessionProviderSchema = z.enum(["codex", "claude"]);
-export type ImportedSessionProvider = z.infer<typeof importedSessionProviderSchema>;
-
 /**
  * Importing an existing CLI conversation into a Poracode thread. Agents that
  * declare `AgentAdapter.sessionImport` expose their on-disk transcripts; the
@@ -42,9 +39,6 @@ export const listImportableSessionsPayloadSchema = z.object({
   cwd: z.string().min(1).optional(),
   /** Matched with {@link matchesImportQuery} on the server and in the UI alike. */
   query: z.string().min(1).optional(),
-  provider: importedSessionProviderSchema.optional(),
-  /** Maximum recent sessions to read per provider. */
-  limit: z.number().int().min(1).max(200).optional(),
 });
 export type ListImportableSessionsPayload = z.infer<typeof listImportableSessionsPayloadSchema>;
 
