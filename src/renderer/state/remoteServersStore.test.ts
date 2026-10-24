@@ -1541,6 +1541,81 @@ describe("useRemoteServersStore", () => {
     expect(bridge.sshDisconnect).toHaveBeenCalledWith({ connectionId: id });
   });
 
+  it("renews a stale SSH access token and retries the remote snapshot", async () => {
+    const id = "1a2f655a-e274-4213-9a2b-029f29062fd7";
+    const connection = { id, label: "Build host", target: "dev@build" };
+    bridge.sshConnect
+      .mockResolvedValueOnce({
+        connectionId: id,
+        endpoint: "http://127.0.0.1:39002/",
+        remotePort: 38987,
+      })
+      .mockResolvedValueOnce({
+        connectionId: id,
+        endpoint: "http://127.0.0.1:39002/",
+        remotePort: 38987,
+        pairingCredential: "lc_pair_renewed",
+      });
+
+    const staleSnapshot = vi.fn<RemoteDesktopClient["snapshot"]>(async () => {
+      throw new RemoteClientError("Invalid access token.", 401, "invalid_access_token");
+    });
+    const staleClient = makeClient({ snapshot: staleSnapshot });
+    const exchangePairingCredential = vi.fn<RemoteDesktopClient["exchangePairingCredential"]>(
+      async () => ({
+        accessToken: "renewed-token",
+        tokenType: "Bearer" as const,
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        scopes: ["session:read", "projects:manage"],
+      }),
+    );
+    const pairingClient = makeClient();
+    pairingClient.exchangePairingCredential = exchangePairingCredential;
+    const renewedClient = makeClient();
+    const factory = vi.fn<RemoteClientFactory>((_endpoint, accessToken) => {
+      if (accessToken === "stale-token") return staleClient;
+      if (accessToken === "renewed-token") return renewedClient;
+      return pairingClient;
+    });
+    useRemoteServersStore.getState().setClientFactory(factory);
+    useRemoteServersStore.setState({
+      servers: [
+        {
+          desktopId: "d1",
+          label: "My build host",
+          remoteLabel: "Build host",
+          endpoint: "http://127.0.0.1:39999/",
+          accessToken: "stale-token",
+          scopes: ["session:read"],
+          transport: { kind: "ssh", connection },
+        },
+      ],
+      runtime: {},
+    });
+
+    await useRemoteServersStore.getState().connectAll();
+
+    expect(staleSnapshot).toHaveBeenCalledOnce();
+    expect(bridge.sshConnect).toHaveBeenNthCalledWith(1, { connection });
+    expect(bridge.sshConnect).toHaveBeenNthCalledWith(2, {
+      connection,
+      issuePairingCredential: true,
+    });
+    expect(exchangePairingCredential).toHaveBeenCalledWith({
+      credential: "lc_pair_renewed",
+      scopes: expect.any(Array),
+      client: { label: "Poracode Desktop", deviceType: "desktop" },
+    });
+    expect(useRemoteServersStore.getState().servers[0]).toMatchObject({
+      desktopId: "d1",
+      label: "My build host",
+      endpoint: "http://127.0.0.1:39002/",
+      accessToken: "renewed-token",
+      scopes: ["session:read", "projects:manage"],
+    });
+    expect(useRemoteServersStore.getState().runtime.d1).toMatchObject({ status: "online" });
+  });
+
   it("marks a persisted SSH server offline when reconnecting its tunnel fails", async () => {
     const connection = {
       id: "1a2f655a-e274-4213-9a2b-029f29062fd7",

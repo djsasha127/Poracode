@@ -12,6 +12,7 @@ import type {
 } from "@/shared/contracts";
 import { friendlyError, msg as sharedMsg } from "@/shared/messages";
 import {
+  isUnauthorizedRemoteError,
   isRemoteTransportFailure,
   RemoteClientError,
   RemoteDesktopClient,
@@ -171,6 +172,9 @@ let openRemoteThreadRequestSeq = 0;
 
 /** In-flight connectAll(), so concurrent callers coalesce onto one pass. */
 let connectAllInFlight: Promise<void> | null = null;
+/** Coalesce stale-token recovery so concurrent snapshot/usage refreshes do not
+ * consume multiple one-time SSH pairing credentials. */
+const remoteSshSessionRenewals = new Map<string, Promise<RemoteServerRecord>>();
 interface RemoteServerEventSocketEntry {
   readonly serverKey: string;
   socket: RemoteSocketLike | null;
@@ -782,6 +786,66 @@ export const useRemoteServersStore = create<RemoteServersState>()(
         }
       };
 
+      /** Renew an expired/revoked bearer session over the already trusted SSH
+       * transport. SSH authentication is the proof of access, so this mirrors
+       * initial SSH pairing without making the user remove and add the host. */
+      const renewSshSession = (server: RemoteServerRecord): Promise<RemoteServerRecord> => {
+        const transport = server.transport;
+        if (transport?.kind !== "ssh") {
+          return Promise.reject(new Error(i18n._(msg`The remote session has expired.`)));
+        }
+        const existing = remoteSshSessionRenewals.get(server.desktopId);
+        if (existing) return existing;
+
+        const renewal = (async () => {
+          const launched = await readBridge().sshConnect({
+            connection: transport.connection,
+            issuePairingCredential: true,
+          });
+          if (!launched.pairingCredential) {
+            throw new Error(i18n._(msg`The remote server returned no pairing credential.`));
+          }
+          const endpoint = normalizeEndpoint(launched.endpoint);
+          const tokenResult = await get()
+            .clientFactory(endpoint)
+            .exchangePairingCredential({
+              credential: launched.pairingCredential,
+              scopes: REMOTE_STANDARD_SCOPES,
+              client: { label: "Poracode Desktop", deviceType: "desktop" },
+            });
+          const client = get().clientFactory(endpoint, tokenResult.accessToken);
+          const environment = await client.environment();
+          if (environment.desktopId !== server.desktopId) {
+            throw new Error(i18n._(msg`The SSH host returned a different remote server.`));
+          }
+          const keepsLocalAlias =
+            server.remoteLabel !== undefined && server.label !== server.remoteLabel;
+          const renewed: RemoteServerRecord = {
+            ...server,
+            label: keepsLocalAlias ? server.label : environment.label,
+            remoteLabel: environment.label,
+            endpoint,
+            accessToken: tokenResult.accessToken,
+            scopes: filterKnownRemoteAccessScopes(tokenResult.scopes),
+            appVersion: environment.appVersion,
+            ...(environment.hostMode ? { hostMode: environment.hostMode } : {}),
+          };
+          set((state) => ({
+            servers: state.servers.map((candidate) =>
+              candidate.desktopId === renewed.desktopId ? renewed : candidate,
+            ),
+          }));
+          closeRemoteServerEventSocket(renewed.desktopId);
+          return renewed;
+        })().finally(() => {
+          if (remoteSshSessionRenewals.get(server.desktopId) === renewal) {
+            remoteSshSessionRenewals.delete(server.desktopId);
+          }
+        });
+        remoteSshSessionRenewals.set(server.desktopId, renewal);
+        return renewal;
+      };
+
       /** Restore a server's transport (SSH tunnel) when needed, then snapshot
        * it and (re)attach its event stream. Shared by connectAll and
        * reconnectServer so transport handling lives in one place. */
@@ -845,13 +909,14 @@ export const useRemoteServersStore = create<RemoteServersState>()(
           }
           // refreshServer below owns other visible connection errors.
         }
-        await Promise.all([
-          get().refreshServer(server.desktopId),
-          get().refreshProviderUsage(server.desktopId),
-        ]);
+        await get().refreshServer(server.desktopId);
         if (!canContinue()) return;
-        startRemoteServerEventStream(server);
-        checkHostUpdateInBackground(server);
+        const connectedServer =
+          get().servers.find((candidate) => candidate.desktopId === server.desktopId) ?? server;
+        await get().refreshProviderUsage(connectedServer.desktopId);
+        if (!canContinue()) return;
+        startRemoteServerEventStream(connectedServer);
+        checkHostUpdateInBackground(connectedServer);
       };
 
       const reconnectAfterHostUpdate = async (
@@ -1257,12 +1322,26 @@ export const useRemoteServersStore = create<RemoteServersState>()(
             setRuntime({ status: "connecting", projects: [], threads: [] });
           }
           try {
-            const client = get().clientFactory(server.endpoint, server.accessToken);
-            const snapshotPromise = client.snapshot();
-            const [snapshot, agentStatuses] =
-              options.includeAgentStatuses === false
-                ? [await snapshotPromise, cached()?.agentStatuses]
-                : await Promise.all([snapshotPromise, client.agentStatuses()]);
+            let activeServer = server;
+            const loadSnapshot = async () => {
+              const client = get().clientFactory(activeServer.endpoint, activeServer.accessToken);
+              const snapshotPromise = client.snapshot();
+              return options.includeAgentStatuses === false
+                ? ([await snapshotPromise, cached()?.agentStatuses] as const)
+                : Promise.all([snapshotPromise, client.agentStatuses()]);
+            };
+            let snapshotResult: Awaited<ReturnType<typeof loadSnapshot>>;
+            try {
+              snapshotResult = await loadSnapshot();
+            } catch (error) {
+              if (!isUnauthorizedRemoteError(error) || activeServer.transport?.kind !== "ssh") {
+                throw error;
+              }
+              activeServer = await renewSshSession(activeServer);
+              if (!isLatest()) return;
+              snapshotResult = await loadSnapshot();
+            }
+            const [snapshot, agentStatuses] = snapshotResult;
             // Drop a stale (superseded) result so out-of-order resolutions don't
             // regress the UI or the seq cursor.
             if (!isLatest()) return;
@@ -1649,6 +1728,7 @@ export function __resetRemoteServersStoreForTest(): void {
   remoteServerAgentStatusRefreshes.clear();
   remoteHostUpdateReconnectSeqByDesktopId.clear();
   remoteHostUpdateRequestSeqByDesktopId.clear();
+  remoteSshSessionRenewals.clear();
   clearRemoteGitState();
   resetRemoteProcedureRouterForTest();
   connectAllInFlight = null;
