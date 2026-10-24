@@ -96,8 +96,11 @@ function run(command, commandArgs, options = {}) {
   const printable = [command, ...commandArgs].join(" ");
   const shellCommands = new Set(["pnpm", "npm", "npx"]);
   const commandLower = command.toLowerCase();
-  const usesShellOnWindows =
-    process.platform === "win32" &&
+  // pnpm 11.28.x installs a shell shim without a shebang. Node's
+  // spawnSync cannot execute that shim directly on macOS (ENOEXEC), while
+  // invoking it through a shell works on both macOS and Windows.
+  const usesShellForPackageManager =
+    (process.platform === "win32" || process.platform === "darwin") &&
     (shellCommands.has(basename(command)) ||
       commandLower.endsWith(".cmd") ||
       commandLower.endsWith(".bat"));
@@ -105,7 +108,7 @@ function run(command, commandArgs, options = {}) {
   const result = spawnSync(command, commandArgs, {
     stdio: "inherit",
     env: process.env,
-    shell: usesShellOnWindows,
+    shell: usesShellForPackageManager,
     ...options,
   });
   if (result.error) {
