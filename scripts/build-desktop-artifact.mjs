@@ -26,6 +26,10 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scanRuntimeExternals } from "./runtime-externals.mjs";
+import {
+  assertDesktopBuildChannel,
+  writeDesktopBuildChannelStamp,
+} from "./desktop-build-channel.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -282,6 +286,7 @@ function copyArtifactsBack(stageReleaseDir, outputDir) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const channel = channelTable.normalizeChannel(process.env.PORACODE_CHANNEL);
   const platform = args.platform ?? detectHostPlatform();
   const arch = args.arch;
   const target = args.target; // optional, e.g. dmg/zip/nsis/AppImage/deb
@@ -304,6 +309,7 @@ async function main() {
   if (!skipBuild) {
     run("pnpm", ["run", "build"], { cwd: repoRoot });
     run("pnpm", ["run", "clean:sourcemaps"], { cwd: repoRoot });
+    writeDesktopBuildChannelStamp(repoRoot, channel);
     const helperArgs = [
       "scripts/prepare-computer-use-helper.mjs",
       "--require",
@@ -314,6 +320,7 @@ async function main() {
     run("node", helperArgs, { cwd: repoRoot });
     run("pnpm", ["run", "prepare:package-assets"], { cwd: repoRoot });
   }
+  assertDesktopBuildChannel(repoRoot, channel);
 
   // Fail before the expensive clean install/rebuild if tsdown emitted a new
   // external that the curated staging package would otherwise omit.
