@@ -40,6 +40,12 @@ const agentInstances: AgentInstanceConfigMap = {
     displayName: "Work",
     environment: { CURSOR_API_KEY: { value: "lc-safe:encrypted", sensitive: true } },
   },
+  antigravityDonor: {
+    id: "antigravity-donor",
+    driver: "antigravity",
+    displayName: "admin@getitcheap",
+    config: { homeDir: "~/.poracode/antigravity-profiles/donor" },
+  },
 };
 
 describe("usageProviders", () => {
@@ -90,6 +96,22 @@ describe("usageProviders", () => {
     expect(providers.find((provider) => provider.id === "cursor:yieldmo")?.sharedWindowReset).toBe(
       true,
     );
+  });
+
+  it("adds isolated Antigravity quota profiles after the base account", () => {
+    const providers = usageProvidersForAgentInstances(agentInstances);
+    const antigravityIndex = providers.findIndex((provider) => provider.id === "antigravity");
+
+    expect(
+      providers.slice(antigravityIndex, antigravityIndex + 2).map((provider) => provider.id),
+    ).toEqual(["antigravity", "antigravity:antigravity-donor"]);
+    expect(providers[antigravityIndex + 1]).toMatchObject({
+      label: "Antigravity admin@getitcheap",
+      ringGroups: expect.arrayContaining([
+        expect.objectContaining({ key: "gemini" }),
+        expect.objectContaining({ key: "claude" }),
+      ]),
+    });
   });
 
   it("orders, disables, and rings Claude profiles like Claude", () => {
