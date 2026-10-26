@@ -229,11 +229,18 @@ describe("usageProviders", () => {
       expect(rings.inner?.id).toBe("antigravity:claude:weekly");
     });
 
-    it("falls back to the most-constrained window when the selected group is absent", () => {
+    it("falls back to the complete available group when the selected group is absent", () => {
       const onlyClaude = windows.filter((w) => w.id.startsWith("antigravity:claude"));
       // Selecting the Gemini group but only Claude windows are present.
       const rings = pickUsageRings("antigravity", onlyClaude, "gemini");
       expect(rings.outer?.id).toBe("antigravity:claude:session-5h");
+      expect(rings.inner?.id).toBe("antigravity:claude:weekly");
+    });
+
+    it("does not invent a missing short window for a weekly-only donor quota", () => {
+      const weeklyOnly = windows.filter((w) => w.id === "antigravity:claude:weekly");
+      const rings = pickUsageRings("antigravity:donor", weeklyOnly, "claude");
+      expect(rings.outer?.id).toBe("antigravity:claude:weekly");
       expect(rings.inner).toBeUndefined();
     });
   });

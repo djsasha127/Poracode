@@ -394,10 +394,18 @@ export function ProviderUsageRail(props: { orientation?: "row" | "column" }) {
   const agentInstances = useSharedSettings((s) => s.agentInstances);
   const setUsageSetting = useSharedSettings((s) => s.setUsageSetting);
 
+  // Resolve the visible provider ids before hydration. Passing them explicitly
+  // is important for remote projects: the SSH helper may still carry an older
+  // disabled-provider list, while the connected desktop has enabled a provider
+  // (or added a quota-donor profile) that the rail must refresh immediately.
+  const allProviders = resolveDisplayedProviders(providerOrder, disabledProviders, agentInstances);
+  const displayedProviderIdsKey = allProviders.map((provider) => provider.id).join("\u0000");
+
   useEffect(() => {
     let cancelled = false;
     if (remoteServerId) {
-      void useRemoteServersStore.getState().refreshProviderUsage(remoteServerId);
+      const providerIds = displayedProviderIdsKey.split("\u0000").filter(Boolean);
+      void useRemoteServersStore.getState().refreshProviderUsage(remoteServerId, providerIds);
     }
     void readBridge()
       .getProviderUsage({})
@@ -410,13 +418,12 @@ export function ProviderUsageRail(props: { orientation?: "row" | "column" }) {
     return () => {
       cancelled = true;
     };
-  }, [remoteServerId]);
+  }, [displayedProviderIdsKey, remoteServerId]);
 
   // Full set drives the persisted order; the rail only offers the providers the
   // user hasn't individually hidden and that have usage worth a ring — a
   // signed-out provider belongs in Settings, not in the rail. Skipped providers
   // still hold their slot in `providerOrder` (the docked panel can reorder them).
-  const allProviders = resolveDisplayedProviders(providerOrder, disabledProviders, agentInstances);
   // Subscribe to rail *eligibility* only. The snapshot map gets a new identity on
   // every refresh tick, so selecting it whole would re-render the rail (and every
   // circle) whenever any provider's percentages moved; each circle already reads

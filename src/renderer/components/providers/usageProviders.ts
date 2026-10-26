@@ -321,6 +321,15 @@ export function pickUsageRings(
     const group = resolveRingGroup(groups, selectedRingGroup);
     const fromGroup = group ? ringsFromSpec(windows, group) : undefined;
     if (fromGroup) return fromGroup;
+    // A provider may legitimately expose only one quota family for an account
+    // (for example Claude windows but no Gemini windows). Preserve the paired
+    // 5h + weekly layout by selecting the first group that actually has data,
+    // rather than degrading to one generic "worst" ring.
+    for (const fallbackGroup of groups) {
+      if (fallbackGroup === group) continue;
+      const fallback = ringsFromSpec(windows, fallbackGroup);
+      if (fallback) return fallback;
+    }
   } else if (meta?.rings) {
     const fromSpec = ringsFromSpec(windows, meta.rings);
     if (fromSpec) return fromSpec;

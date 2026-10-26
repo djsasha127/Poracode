@@ -30,7 +30,7 @@ function Ring(props: { window: UsageWindow; radius: number }) {
         cy="12"
         r={radius}
         fill="none"
-        stroke="color-mix(in oklab, var(--foreground) 18%, transparent)"
+        stroke="color-mix(in oklab, var(--foreground) 30%, transparent)"
         strokeWidth="1.75"
       />
       <circle
@@ -80,7 +80,7 @@ export function ProviderUsageCircle(props: {
             cy="12"
             r={outerRadius}
             fill="none"
-            stroke="color-mix(in oklab, var(--foreground) 18%, transparent)"
+            stroke="color-mix(in oklab, var(--foreground) 30%, transparent)"
             strokeWidth="1.75"
           />
         )}
