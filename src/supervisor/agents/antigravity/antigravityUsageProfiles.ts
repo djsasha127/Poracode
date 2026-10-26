@@ -4,11 +4,36 @@ import type { HostPort, UsageSnapshot } from "@poracode/agents-usage";
 import { antigravityProfileKind, parseAntigravityProfileInstanceConfig } from "@/shared/contracts";
 import type { SharedSettings } from "@/shared/settings";
 import { resolveNativeTildePath } from "../base/sessionFs";
-import { collectAntigravityCloudUsageWithAccessToken } from "./antigravityCloudUsage";
+import {
+  type AntigravityAcpCredentials,
+  resolveAntigravityAcpCredentialsCached,
+} from "./antigravityAcpCredentials";
+import {
+  collectAntigravityCloudUsage,
+  collectAntigravityCloudUsageWithAccessToken,
+} from "./antigravityCloudUsage";
 
 interface AntigravityCliTokenFile {
-  token?: { access_token?: unknown };
+  token?: {
+    access_token?: unknown;
+    refresh_token?: unknown;
+    expiry?: unknown;
+  };
 }
+
+interface AntigravityCliToken {
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: number;
+}
+
+export interface AntigravityProfileUsageDeps {
+  resolveOAuthClient(): Promise<AntigravityAcpCredentials | undefined>;
+}
+
+const defaultDeps: AntigravityProfileUsageDeps = {
+  resolveOAuthClient: resolveAntigravityAcpCredentialsCached,
+};
 
 export interface AntigravityUsageProfile {
   providerId: string;
@@ -35,15 +60,27 @@ export function readAntigravityUsageProfiles(
   return profiles;
 }
 
-async function readProfileAccessToken(homeDir: string): Promise<string | undefined> {
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+async function readProfileToken(homeDir: string): Promise<AntigravityCliToken | undefined> {
   try {
     const raw = await readFile(
       join(homeDir, ".gemini", "antigravity-cli", "antigravity-oauth-token"),
       "utf8",
     );
     const parsed = JSON.parse(raw) as AntigravityCliTokenFile;
-    const token = parsed.token?.access_token;
-    return typeof token === "string" && token.trim() ? token.trim() : undefined;
+    const accessToken = nonEmptyString(parsed.token?.access_token);
+    const refreshToken = nonEmptyString(parsed.token?.refresh_token);
+    const expiry = nonEmptyString(parsed.token?.expiry);
+    const parsedExpiry = expiry ? Date.parse(expiry) : Number.NaN;
+    if (!accessToken && !refreshToken) return undefined;
+    return {
+      ...(accessToken ? { accessToken } : {}),
+      ...(refreshToken ? { refreshToken } : {}),
+      ...(Number.isFinite(parsedExpiry) ? { expiresAt: parsedExpiry } : {}),
+    };
   } catch {
     return undefined;
   }
@@ -52,10 +89,11 @@ async function readProfileAccessToken(homeDir: string): Promise<string | undefin
 export async function collectAntigravityProfileUsage(
   profile: AntigravityUsageProfile,
   host: HostPort,
+  deps: AntigravityProfileUsageDeps = defaultDeps,
 ): Promise<UsageSnapshot> {
   const now = host.now();
-  const accessToken = await readProfileAccessToken(profile.homeDir);
-  if (!accessToken) {
+  const profileToken = await readProfileToken(profile.homeDir);
+  if (!profileToken) {
     return {
       providerId: profile.providerId,
       status: "auth-missing",
@@ -64,11 +102,53 @@ export async function collectAntigravityProfileUsage(
       error: "Antigravity profile is not signed in",
     };
   }
+
   try {
-    return await collectAntigravityCloudUsageWithAccessToken(
+    let accessSnapshot: UsageSnapshot | undefined;
+    const accessTokenStillValid =
+      profileToken.accessToken &&
+      (profileToken.expiresAt === undefined || profileToken.expiresAt > now + 60_000);
+    if (accessTokenStillValid) {
+      accessSnapshot = await collectAntigravityCloudUsageWithAccessToken(
+        now,
+        host,
+        profileToken.accessToken!,
+        profile.providerId,
+      );
+      if (accessSnapshot.status !== "auth-missing") return accessSnapshot;
+    }
+
+    if (!profileToken.refreshToken) {
+      return (
+        accessSnapshot ?? {
+          providerId: profile.providerId,
+          status: "auth-missing",
+          windows: [],
+          fetchedAt: now,
+          error: "Antigravity profile token expired",
+        }
+      );
+    }
+
+    // The client id and secret identify the official Antigravity application,
+    // not an account. Combine them with this isolated profile's refresh token
+    // so quota collection never falls back to the main account's quota.
+    const oauthClient = await deps.resolveOAuthClient();
+    if (!oauthClient) {
+      return (
+        accessSnapshot ?? {
+          providerId: profile.providerId,
+          status: "auth-missing",
+          windows: [],
+          fetchedAt: now,
+          error: "Antigravity profile token expired; OAuth client unavailable",
+        }
+      );
+    }
+    return await collectAntigravityCloudUsage(
       now,
       host,
-      accessToken,
+      { ...oauthClient, refreshToken: profileToken.refreshToken },
       profile.providerId,
     );
   } catch (error) {

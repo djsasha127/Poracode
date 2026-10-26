@@ -179,16 +179,19 @@ export async function collectAntigravityCloudUsage(
   nowMs: number,
   host: HostPort,
   credentials: AntigravityAcpCredentials,
+  providerId = "antigravity",
 ): Promise<UsageSnapshot> {
   const token = await resolveAccessToken(nowMs, host, credentials);
   if (!token.accessToken) {
-    return token.failure ?? nonOkSnapshot(nowMs, "error", "OAuth token refresh failed");
+    const failure = token.failure ?? nonOkSnapshot(nowMs, "error", "OAuth token refresh failed");
+    return { ...failure, providerId };
   }
 
   const snapshot = await collectAntigravityCloudUsageWithAccessToken(
     nowMs,
     host,
     token.accessToken,
+    providerId,
   );
   if (snapshot.status === "auth-missing") cachedAccessToken = undefined;
   return snapshot;
