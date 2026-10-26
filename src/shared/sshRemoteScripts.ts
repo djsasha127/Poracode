@@ -174,6 +174,132 @@ ensure_poracode_node() {
 }
 `;
 
+/**
+ * Mirror host-owned, filesystem-backed provider profiles into an SSH helper's
+ * isolated settings file. The helper deliberately has its own database and
+ * secret-storage key, so copying the whole desktop settings file would be both
+ * unsafe and corrupting. Only profile definitions are portable: credentials
+ * remain in their provider-specific home/config directories on the SSH host.
+ *
+ * Kept as a shell function so it also runs before an already-active compatible
+ * helper is reused; no agent process has to be restarted merely to discover a
+ * profile added through the host's desktop app.
+ */
+export const REMOTE_AGENT_PROFILE_SYNC_FUNCTION = String.raw`
+sync_host_agent_profiles() {
+  "$NODE" - "$1" "$2" "$3" "$4" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const sourcePath = process.argv[2];
+const destinationPath = process.argv[3];
+const statePath = process.argv[4];
+const channel = process.argv[5];
+const profileDrivers = new Set(["claude", "codex", "antigravity", "kimi"]);
+const validId = /^[a-z0-9][a-z0-9_\-:.]{0,119}$/i;
+
+function readJson(filePath, fallback, label) {
+  if (!fs.existsSync(filePath)) return fallback;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (error) {
+    process.stderr.write("Poracode SSH left " + label + " unchanged because " + filePath + " is invalid JSON.\n");
+    return undefined;
+  }
+}
+
+function objectRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function portableConfig(driver, value) {
+  const config = objectRecord(value);
+  if (driver === "claude") {
+    if (typeof config.configDir !== "string" || config.configDir.length === 0) return undefined;
+    const portable = { configDir: config.configDir };
+    if (Array.isArray(config.models)) {
+      portable.models = config.models
+        .filter((model) => model && typeof model === "object" && typeof model.id === "string")
+        .map((model) => ({
+          id: model.id,
+          ...(typeof model.label === "string" ? { label: model.label } : {}),
+        }));
+    }
+    if (Array.isArray(config.efforts)) portable.efforts = config.efforts.filter((item) => typeof item === "string");
+    if (typeof config.defaultEffort === "string") portable.defaultEffort = config.defaultEffort;
+    if (config.modelEfforts && typeof config.modelEfforts === "object" && !Array.isArray(config.modelEfforts)) {
+      portable.modelEfforts = Object.fromEntries(
+        Object.entries(config.modelEfforts)
+          .filter(([, efforts]) => Array.isArray(efforts))
+          .map(([model, efforts]) => [model, efforts.filter((item) => typeof item === "string")]),
+      );
+    }
+    return portable;
+  }
+  if (typeof config.homeDir !== "string" || config.homeDir.length === 0) return undefined;
+  return { homeDir: config.homeDir };
+}
+
+function writeJsonAtomic(filePath, value) {
+  const encoded = JSON.stringify(value, null, 2) + "\n";
+  if (fs.existsSync(filePath) && fs.readFileSync(filePath, "utf8") === encoded) return;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const temporaryPath = filePath + ".tmp-" + process.pid;
+  fs.writeFileSync(temporaryPath, encoded, { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(temporaryPath, filePath);
+}
+
+const source = readJson(sourcePath, {}, "profile sync");
+if (source === undefined) process.exit(0);
+const destination = readJson(destinationPath, {}, "helper settings");
+if (destination === undefined) process.exit(0);
+const previousState = readJson(statePath, { ids: [] }, "profile sync state") ?? { ids: [] };
+const previousIds = new Set(Array.isArray(previousState.ids) ? previousState.ids : []);
+const destinationInstances = { ...objectRecord(destination.agentInstances) };
+
+for (const id of previousIds) {
+  if (typeof id === "string") delete destinationInstances[id];
+}
+
+const sourceProfiles = [];
+for (const [id, rawInstance] of Object.entries(objectRecord(source.agentInstances))) {
+  if (!validId.test(id) || !rawInstance || typeof rawInstance !== "object" || Array.isArray(rawInstance)) continue;
+  const instance = rawInstance;
+  if (instance.id !== id || typeof instance.driver !== "string" || !profileDrivers.has(instance.driver)) continue;
+  const config = portableConfig(instance.driver, instance.config);
+  if (!config) continue;
+
+  const existing = destinationInstances[id];
+  if (
+    existing &&
+    typeof existing === "object" &&
+    !Array.isArray(existing) &&
+    typeof existing.driver === "string" &&
+    !profileDrivers.has(existing.driver)
+  ) {
+    continue;
+  }
+
+  const portable = {
+    id,
+    driver: instance.driver,
+    config,
+    ...(typeof instance.displayName === "string" ? { displayName: instance.displayName } : {}),
+    ...(typeof instance.version === "string" ? { version: instance.version } : {}),
+    ...(typeof instance.accentColor === "string" ? { accentColor: instance.accentColor } : {}),
+    ...(typeof instance.enabled === "boolean" ? { enabled: instance.enabled } : {}),
+  };
+  destinationInstances[id] = portable;
+  sourceProfiles.push(id);
+}
+
+destination.agentInstances = destinationInstances;
+writeJsonAtomic(destinationPath, destination);
+writeJsonAtomic(statePath, { channel, ids: sourceProfiles.sort() });
+NODE
+}
+`;
+
 export const PROBE_REMOTE_RUNTIME_SCRIPT = String.raw`set -eu
 ${REMOTE_NODE_ENV_SCRIPT}
 HASH="$1"
@@ -242,13 +368,20 @@ printf 'ready\n'
 
 export const LAUNCH_REMOTE_SERVER_SCRIPT = String.raw`set -eu
 ${REMOTE_NODE_ENV_SCRIPT}
+${REMOTE_AGENT_PROFILE_SYNC_FUNCTION}
 CONNECTION_ID="$1"
 RUNTIME_HASH="$2"
+CHANNEL="$3"
 case "$CONNECTION_ID" in
   *[!0-9a-f-]*|'') printf 'Invalid Poracode SSH connection id.\n' >&2; exit 2 ;;
 esac
 case "$RUNTIME_HASH" in
   *[!0-9a-f]*|'') printf 'Invalid Poracode runtime hash.\n' >&2; exit 2 ;;
+esac
+case "$CHANNEL" in
+  stable) HOST_SETTINGS="$HOME/.poracode/settings.json" ;;
+  nightly) HOST_SETTINGS="$HOME/.poracode-nightly/settings.json" ;;
+  *) printf 'Invalid Poracode channel.\n' >&2; exit 2 ;;
 esac
 ensure_poracode_node || {
   printf 'Poracode SSH could not provision its private Node runtime. Check outbound access to nodejs.org, then retry.\n' >&2
@@ -266,6 +399,11 @@ DATA_DIR="$STATE/data"
 mkdir -p "$STATE" "$DATA_DIR"
 test -f "$RUNTIME/.ready" || { printf 'Poracode remote runtime is not installed.\n' >&2; exit 45; }
 APP_VERSION="$("$NODE" -p 'require(process.argv[1]).version' "$RUNTIME/package.json")"
+sync_host_agent_profiles \
+  "$HOST_SETTINGS" \
+  "$DATA_DIR/settings.json" \
+  "$STATE/host-agent-profiles.json" \
+  "$CHANNEL"
 
 server_ready() {
   REQUIRE_EXACT_VERSION="\${3:-1}"

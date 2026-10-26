@@ -11,6 +11,7 @@ import {
   type SshDiscoveredHost,
 } from "@/shared/ssh";
 import { compareVersions } from "@/shared/changelog";
+import type { PoracodeChannel } from "@/shared/channel";
 import { ensureSshRuntimeBundle, type SshRuntimeBundleOptions } from "./runtimeBundle";
 import {
   bootstrapRemoteRuntime,
@@ -41,6 +42,7 @@ interface TunnelEntry {
 }
 
 export interface SshConnectionManagerOptions extends SshRuntimeBundleOptions {
+  readonly channel?: PoracodeChannel;
   readonly sshCommand?: string;
   readonly scpCommand?: string;
   readonly sshConfigFile?: string;
@@ -287,6 +289,7 @@ export class SshConnectionManager {
       },
       connection.id,
       bundle.hash,
+      this.options.channel ?? "stable",
     );
 
     const localPort = await reserveLoopbackPort();

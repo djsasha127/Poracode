@@ -810,6 +810,7 @@ if (!hasSingleInstanceLock) {
         ? join(process.resourcesPath, "plugins")
         : join(__dirname, "..", "..", "resources", "plugins");
       const sshConnectionManager = new SshConnectionManager({
+        channel,
         mainBundleDir: __dirname,
         agentPluginsDir: app.isPackaged
           ? join(process.resourcesPath, "agent-plugins")

@@ -302,6 +302,7 @@ describe("SSH tunnel lifecycle", () => {
     const bundle = ensureSshRuntimeBundle(options);
     const manager = new SshConnectionManager({
       ...options,
+      channel: "nightly",
       fetchImpl: (async () => {
         throw new Error("helper offline");
       }) as typeof fetch,
@@ -328,7 +329,12 @@ describe("SSH tunnel lifecycle", () => {
     const result = await manager.connect({ connection: remoteConnection });
 
     expect(staleChild.kill).toHaveBeenCalledOnce();
-    expect(bootstrap).toHaveBeenCalledOnce();
+    expect(bootstrap).toHaveBeenCalledWith(
+      expect.objectContaining({ runScript: expect.any(Function) }),
+      remoteConnection.id,
+      bundle.hash,
+      "nightly",
+    );
     expect(openTunnel).toHaveBeenCalledOnce();
     expect(result.remotePort).toBe(49154);
 

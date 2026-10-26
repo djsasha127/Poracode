@@ -1,4 +1,5 @@
 import { parsePairingCredential, parseRemoteLaunchPort } from "./ssh";
+import type { PoracodeChannel } from "./channel";
 import { msg } from "./messages";
 import {
   remoteEnvironmentDescriptorSchema,
@@ -48,6 +49,7 @@ export async function bootstrapRemoteRuntime(
   transport: RemoteRuntimeTransport,
   connectionId: string,
   hash: string,
+  channel: PoracodeChannel = "stable",
 ): Promise<number> {
   const probe = await transport.runScript(
     PROBE_REMOTE_RUNTIME_SCRIPT,
@@ -61,7 +63,7 @@ export async function bootstrapRemoteRuntime(
   }
   const launched = await transport.runScript(
     LAUNCH_REMOTE_SERVER_SCRIPT,
-    [connectionId, hash],
+    [connectionId, hash, channel],
     SSH_COMMAND_TIMEOUT_MS,
   );
   return parseRemoteLaunchPort(launched);
