@@ -256,6 +256,20 @@ if (destination === undefined) process.exit(0);
 const previousState = readJson(statePath, { ids: [] }, "profile sync state") ?? { ids: [] };
 const previousIds = new Set(Array.isArray(previousState.ids) ? previousState.ids : []);
 const destinationInstances = { ...objectRecord(destination.agentInstances) };
+// Credentials are never copied from the connecting desktop, but a helper may
+// already own a sealed credential for a mirrored profile. Snapshot those
+// helper-owned environments before removing the prior mirror set so a routine
+// SSH reconnect cannot silently sign the remote profile out.
+const helperProfileEnvironments = new Map(
+  Object.entries(destinationInstances).flatMap(([id, rawInstance]) => {
+    if (!rawInstance || typeof rawInstance !== "object" || Array.isArray(rawInstance)) return [];
+    const instance = rawInstance;
+    if (typeof instance.driver !== "string" || !profileDrivers.has(instance.driver)) return [];
+    const environment = objectRecord(instance.environment);
+    if (Object.keys(environment).length === 0) return [];
+    return [[id, { driver: instance.driver, environment }]];
+  }),
+);
 
 for (const id of previousIds) {
   if (typeof id === "string") delete destinationInstances[id];
@@ -284,6 +298,9 @@ for (const [id, rawInstance] of Object.entries(objectRecord(source.agentInstance
     id,
     driver: instance.driver,
     config,
+    ...(helperProfileEnvironments.get(id)?.driver === instance.driver
+      ? { environment: helperProfileEnvironments.get(id).environment }
+      : {}),
     ...(typeof instance.displayName === "string" ? { displayName: instance.displayName } : {}),
     ...(typeof instance.version === "string" ? { version: instance.version } : {}),
     ...(typeof instance.accentColor === "string" ? { accentColor: instance.accentColor } : {}),

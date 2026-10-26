@@ -84,6 +84,15 @@ describe("LAUNCH_REMOTE_SERVER_SCRIPT", () => {
               driver: "acp-generic",
               displayName: "Keep me",
             },
+            donor: {
+              id: "donor",
+              driver: "antigravity",
+              displayName: "Old mirrored donor",
+              config: { homeDir: "/old-donor" },
+              environment: {
+                TOKEN: { value: "remote-sealed-token", sensitive: true },
+              },
+            },
             stale: {
               id: "stale",
               driver: "kimi",
@@ -93,7 +102,7 @@ describe("LAUNCH_REMOTE_SERVER_SCRIPT", () => {
           },
         }),
       );
-      writeFileSync(statePath, JSON.stringify({ channel: "nightly", ids: ["stale"] }));
+      writeFileSync(statePath, JSON.stringify({ channel: "nightly", ids: ["donor", "stale"] }));
 
       const first = runSync();
       expect(first.status).toBe(0);
@@ -108,11 +117,41 @@ describe("LAUNCH_REMOTE_SERVER_SCRIPT", () => {
         driver: "antigravity",
         displayName: "Quota donor",
         config: { homeDir: "~/.poracode/antigravity-profiles/donor" },
+        environment: {
+          TOKEN: { value: "remote-sealed-token", sensitive: true },
+        },
       });
       expect(JSON.stringify(synced)).not.toContain("must-not-cross");
       expect(JSON.parse(readFileSync(statePath, "utf8"))).toEqual({
         channel: "nightly",
         ids: ["donor"],
+      });
+
+      // Reusing an id for another profile driver must not carry the old
+      // helper-owned credential into the replacement profile.
+      writeFileSync(
+        sourcePath,
+        JSON.stringify({
+          agentInstances: {
+            donor: {
+              id: "donor",
+              driver: "claude",
+              displayName: "Replacement Claude",
+              config: { configDir: "~/.poracode/claude-profiles/replacement" },
+            },
+          },
+        }),
+      );
+      const replaced = runSync();
+      expect(replaced.status).toBe(0);
+      const replacedSettings = JSON.parse(readFileSync(destinationPath, "utf8")) as {
+        agentInstances: Record<string, Record<string, unknown>>;
+      };
+      expect(replacedSettings.agentInstances.donor).toEqual({
+        id: "donor",
+        driver: "claude",
+        displayName: "Replacement Claude",
+        config: { configDir: "~/.poracode/claude-profiles/replacement" },
       });
 
       writeFileSync(sourcePath, JSON.stringify({ agentInstances: {} }));
