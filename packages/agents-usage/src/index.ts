@@ -171,6 +171,7 @@ export {
 } from "./collectors/qoder";
 export type { QoderUsagesResponse } from "./collectors/qoder";
 export {
+  antigravityAvailableModelsWindows,
   antigravityPool,
   antigravityPoolWindows,
   antigravityQuotaSummaryWindows,

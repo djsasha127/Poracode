@@ -135,6 +135,89 @@ export function antigravityQuotaSummaryWindows(body: unknown): UsageWindow[] {
   return entries.sort((a, b) => a.order - b.order).map((entry) => entry.window);
 }
 
+/**
+ * Consumer Antigravity accounts can be denied access to
+ * `RetrieveUserQuotaSummary` while `fetchAvailableModels` still returns the
+ * quota attached to every available model. Normalize that response into the
+ * same renderer-facing group/cadence ids as the quota-summary API.
+ */
+export function antigravityAvailableModelsWindows(body: unknown, nowMs: number): UsageWindow[] {
+  if (!body || typeof body !== "object") return [];
+  const root = body as Record<string, unknown>;
+  const response =
+    root.response && typeof root.response === "object"
+      ? (root.response as Record<string, unknown>)
+      : root;
+  const models = response.models;
+  if (!models || typeof models !== "object" || Array.isArray(models)) return [];
+
+  const buckets = new Map<
+    string,
+    {
+      group: AntigravityGroupKey;
+      cadence: AntigravityCadence;
+      remainingFraction: number;
+      resetsAt: number | undefined;
+    }
+  >();
+  for (const [modelId, raw] of Object.entries(models as Record<string, unknown>)) {
+    if (!raw || typeof raw !== "object") continue;
+    const model = raw as Record<string, unknown>;
+    const label = typeof model.displayName === "string" ? model.displayName : modelId;
+    const identity = `${modelId} ${label}`.toLowerCase();
+    const group: AntigravityGroupKey | undefined = identity.includes("gemini")
+      ? "gemini"
+      : /claude|gpt/.test(identity)
+        ? "claude"
+        : undefined;
+    if (!group) continue;
+    const quota =
+      model.quotaInfo && typeof model.quotaInfo === "object"
+        ? (model.quotaInfo as Record<string, unknown>)
+        : undefined;
+    const remainingFraction = quota?.remainingFraction;
+    if (typeof remainingFraction !== "number" || !Number.isFinite(remainingFraction)) continue;
+    const resetsAt = toEpochMs(typeof quota?.resetTime === "string" ? quota.resetTime : undefined);
+
+    // Current consumer responses expose the Claude/GPT and tiered/image pools
+    // on the weekly clock; the ordinary Gemini pools are the rolling 5h quota.
+    // The horizon check keeps this forward-compatible when new weekly model ids
+    // appear without a naming hint.
+    const cadence: AntigravityCadence =
+      group === "claude" ||
+      /tiered|image/.test(identity) ||
+      (resetsAt !== undefined && resetsAt - nowMs > 24 * 60 * 60 * 1000)
+        ? "weekly"
+        : "session-5h";
+    const id = antigravityWindowId(group, cadence);
+    const fraction = Math.min(1, Math.max(0, remainingFraction));
+    const previous = buckets.get(id);
+    if (!previous || fraction < previous.remainingFraction) {
+      buckets.set(id, {
+        group,
+        cadence,
+        remainingFraction: fraction,
+        resetsAt: resetsAt ?? previous?.resetsAt,
+      });
+    } else if (previous.resetsAt === undefined && resetsAt !== undefined) {
+      previous.resetsAt = resetsAt;
+    }
+  }
+
+  return [...buckets.values()]
+    .sort(
+      (a, b) =>
+        antigravityWindowOrder(a.group, a.cadence) - antigravityWindowOrder(b.group, b.cadence),
+    )
+    .map(({ group, cadence, remainingFraction, resetsAt }) => ({
+      id: antigravityWindowId(group, cadence),
+      label: `${ANTIGRAVITY_GROUP_LABEL[group]} · ${ANTIGRAVITY_CADENCE_LABEL[cadence]}`,
+      usedPercent: usedPercentFromRemaining(remainingFraction),
+      unit: "requests" as const,
+      ...(resetsAt !== undefined ? { resetsAt } : {}),
+    }));
+}
+
 interface AntigravityPool {
   id: "gemini-pro" | "gemini-flash" | "claude";
   label: string;

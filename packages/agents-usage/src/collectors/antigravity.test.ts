@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  antigravityAvailableModelsWindows,
   antigravityPool,
   antigravityPoolWindows,
   antigravityQuotaSummaryWindows,
@@ -167,5 +168,51 @@ describe("antigravityPoolWindows", () => {
       { label: "Gemini 3.5 Flash", remainingFraction: 0.4, resetsAt: undefined },
     ]);
     expect(windows.map((w) => w.id)).toEqual(["antigravity:gemini-flash"]);
+  });
+});
+
+describe("antigravityAvailableModelsWindows", () => {
+  it("normalizes consumer model quotas into Gemini and Claude/GPT ring groups", () => {
+    const windows = antigravityAvailableModelsWindows(
+      {
+        models: {
+          "gemini-3-flash": {
+            displayName: "Gemini 3 Flash",
+            quotaInfo: {
+              remainingFraction: 0.4,
+              resetTime: new Date(NOW + 5 * 3_600_000).toISOString(),
+            },
+          },
+          "gemini-3.8-flash-tiered": {
+            quotaInfo: {
+              remainingFraction: 0.8,
+              resetTime: new Date(NOW + 7 * 86_400_000).toISOString(),
+            },
+          },
+          "claude-opus-4-6-thinking": {
+            displayName: "Claude Opus 4.6 (Thinking)",
+            quotaInfo: {
+              remainingFraction: 0.3,
+              resetTime: new Date(NOW + 7 * 86_400_000).toISOString(),
+            },
+          },
+          "gpt-oss-120b-medium": {
+            displayName: "GPT-OSS 120B (Medium)",
+            quotaInfo: {
+              remainingFraction: 0.6,
+              resetTime: new Date(NOW + 7 * 86_400_000).toISOString(),
+            },
+          },
+          tab_flash_lite_preview: { quotaInfo: { remainingFraction: 0 } },
+        },
+      },
+      NOW,
+    );
+
+    expect(windows.map((window) => [window.id, window.usedPercent])).toEqual([
+      ["antigravity:gemini:session-5h", 60],
+      ["antigravity:gemini:weekly", 20],
+      ["antigravity:claude:weekly", 70],
+    ]);
   });
 });

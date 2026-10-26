@@ -108,6 +108,48 @@ describe("collectAntigravityCloudUsage", () => {
     });
   });
 
+  it("falls back to consumer model quotas when the summary API requires a license", async () => {
+    const host = hostWith(async (request) => {
+      if (request.url === ANTIGRAVITY_GOOGLE_TOKEN_URI) {
+        return response(200, JSON.stringify({ access_token: "consumer-access-token" }));
+      }
+      if (request.url.endsWith(":retrieveUserQuotaSummary")) return response(403);
+      if (request.url.endsWith(":fetchAvailableModels")) {
+        return response(
+          200,
+          JSON.stringify({
+            models: {
+              "gemini-3-flash": {
+                displayName: "Gemini 3 Flash",
+                quotaInfo: { remainingFraction: 0.75, resetTime: new Date(NOW + 3_600_000) },
+              },
+              "claude-opus-4-6-thinking": {
+                displayName: "Claude Opus 4.6 (Thinking)",
+                quotaInfo: { remainingFraction: 0.5, resetTime: new Date(NOW + 604_800_000) },
+              },
+            },
+          }),
+        );
+      }
+      if (request.url.endsWith(":loadCodeAssist")) {
+        return response(200, JSON.stringify({ currentTier: { name: "Antigravity" } }));
+      }
+      return response(404);
+    });
+
+    const snapshot = await collectAntigravityCloudUsage(NOW, host, CREDENTIALS);
+
+    expect(snapshot).toMatchObject({
+      providerId: "antigravity",
+      status: "ok",
+      plan: "Antigravity",
+    });
+    expect(snapshot.windows.map((window) => [window.id, window.usedPercent])).toEqual([
+      ["antigravity:gemini:session-5h", 25],
+      ["antigravity:claude:weekly", 50],
+    ]);
+  });
+
   it("reports an authenticated summary without quota windows clearly", async () => {
     const host = hostWith(async (request) => {
       if (request.url === ANTIGRAVITY_GOOGLE_TOKEN_URI) {

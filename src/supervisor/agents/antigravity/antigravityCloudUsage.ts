@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  antigravityAvailableModelsWindows,
   antigravityQuotaSummaryWindows,
   type HostPort,
   type HttpResponse,
@@ -13,6 +14,7 @@ const CLOUD_CODE_BASE_URLS = [
   "https://cloudcode-pa.googleapis.com",
 ] as const;
 const QUOTA_SUMMARY_PATH = "/v1internal:retrieveUserQuotaSummary";
+const AVAILABLE_MODELS_PATH = "/v1internal:fetchAvailableModels";
 const LOAD_CODE_ASSIST_PATH = "/v1internal:loadCodeAssist";
 const ACCESS_TOKEN_EXPIRY_BUFFER_MS = 60_000;
 
@@ -214,12 +216,31 @@ export async function collectAntigravityCloudUsageWithAccessToken(
     }
     lastStatus = response.status;
     if (response.status === 401 || response.status === 403) {
-      return nonOkSnapshot(
-        nowMs,
-        "auth-missing",
-        `Cloud Code token rejected (${response.status})`,
-        providerId,
-      );
+      // Consumer Antigravity accounts legitimately receive 403 from the
+      // enterprise quota-summary RPC. Their model catalog carries equivalent
+      // per-model quota metadata, so try it before treating the token as bad.
+      try {
+        const available = await cloudCodePost(host, baseUrl, AVAILABLE_MODELS_PATH, accessToken);
+        if (available.status >= 200 && available.status < 300) {
+          const windows = antigravityAvailableModelsWindows(
+            JSON.parse(available.body) as unknown,
+            nowMs,
+          );
+          if (windows.length > 0) {
+            const plan = await loadPlan(host, accessToken, baseUrl);
+            return {
+              providerId,
+              status: "ok",
+              windows,
+              fetchedAt: nowMs,
+              ...(plan ? { plan } : {}),
+            };
+          }
+        }
+      } catch {
+        // Try the second Cloud Code host before reporting missing auth.
+      }
+      continue;
     }
     if (response.status === 429) {
       return nonOkSnapshot(nowMs, "rate-limited", "Cloud Code rate limited", providerId);
@@ -243,12 +264,19 @@ export async function collectAntigravityCloudUsageWithAccessToken(
   }
 
   const error =
-    lastStatus === undefined
-      ? "Cloud Code quota request failed"
-      : lastStatus >= 200 && lastStatus < 300
-        ? "Cloud Code quota summary returned no windows"
-        : `Cloud Code quota HTTP ${lastStatus}`;
-  return nonOkSnapshot(nowMs, "error", error, providerId);
+    lastStatus === 401 || lastStatus === 403
+      ? `Cloud Code token rejected (${lastStatus})`
+      : lastStatus === undefined
+        ? "Cloud Code quota request failed"
+        : lastStatus >= 200 && lastStatus < 300
+          ? "Cloud Code quota summary returned no windows"
+          : `Cloud Code quota HTTP ${lastStatus}`;
+  return nonOkSnapshot(
+    nowMs,
+    lastStatus === 401 || lastStatus === 403 ? "auth-missing" : "error",
+    error,
+    providerId,
+  );
 }
 
 /** Clear process-local OAuth state between deterministic tests. */
