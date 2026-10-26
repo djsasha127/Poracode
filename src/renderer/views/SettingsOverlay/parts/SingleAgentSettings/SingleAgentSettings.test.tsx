@@ -31,6 +31,7 @@ const sharedSettingsState = {
 
 const appState = {
   projects: [] as Project[],
+  threads: [] as Array<{ agentKind: string }>,
 };
 
 const toastMock = vi.hoisted(() => ({
@@ -477,6 +478,7 @@ describe("SingleAgentSettings", () => {
     statusesState.agentStatuses = [];
     statusesState.wslAgentStatuses = [];
     appState.projects = [];
+    appState.threads = [];
     sharedSettingsState.disabledAgents = [];
     sharedSettingsState.hiddenModels = {};
     sharedSettingsState.agentSettings = {};
@@ -672,6 +674,35 @@ describe("SingleAgentSettings", () => {
       "~/.poracode/claude-profiles/glm",
     );
     expect(screen.queryByText("This agent is not installed.")).not.toBeInTheDocument();
+  });
+
+  it("renders an authenticated Antigravity CLI profile without base ACP install warnings", () => {
+    sharedSettingsState.agentInstances = {
+      donor: {
+        id: "donor",
+        driver: "antigravity",
+        displayName: "admin@getitcheap",
+        config: { homeDir: "~/.poracode/antigravity-profiles/donor" },
+      },
+    };
+    statusesState.agentStatuses = [
+      makeStatus("antigravity:donor", {
+        label: "Antigravity admin@getitcheap",
+        version: "1.4.7",
+        loginCommand: "agy",
+        authMethods: [
+          { type: "terminal", id: "antigravity-login", name: "Antigravity login", args: [] },
+        ],
+      }),
+    ];
+
+    render(<SingleAgentSettings agentKind="antigravity:donor" />);
+
+    expect(envRow("Default")).toHaveTextContent("v1.4.7");
+    expect(screen.queryByText(/CLI not installed/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ACP not installed/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Install Antigravity/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Re-login/i })).toBeInTheDocument();
   });
 
   it("summarizes OpenCode connected providers on a single line", () => {

@@ -704,7 +704,16 @@ export function SingleAgentSettings(props: {
   // A panel that owns the install rows already presents its provider's runtimes
   // (Cursor groups its CLI-backed ACP runtime itself), so only providers
   // without one fold their slots into the row.
-  const runtimeSlots = panelOwnsInstallRows ? undefined : providerEntry?.runtimeSlots;
+  // Instance profiles can deliberately expose only one of the base provider's
+  // runtimes. Antigravity donor profiles, for example, are isolated terminal
+  // CLI homes and do not have their own ACP chat runtime. Their detected
+  // status therefore has no `runtimeVariants`; applying the base provider's
+  // CLI/ACP slots here would falsely render both as "not installed" and offer
+  // an install even though the profile CLI is already installed and signed in.
+  const runtimeSlots =
+    panelOwnsInstallRows || (profileKindParts && !agent.runtimeVariants)
+      ? undefined
+      : providerEntry?.runtimeSlots;
 
   const installRuntimeInEnvironment = (
     status: AgentStatus,
