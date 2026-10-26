@@ -87,6 +87,13 @@ export interface AcpGenericAdapterOptions {
   stderrTurnSignalParser?: (line: string) => "background-wait" | undefined;
   /** Provider-owned rewrite of inbound `session/update` notifications. */
   sessionUpdateTransform?: AcpSessionUpdateTransform;
+  /**
+   * Per-runtime environment isolation applied to probes, authentication, and
+   * live ACP sessions. The returned values win over the registry instance's
+   * environment so profile-owned HOME/credential boundaries cannot be
+   * accidentally collapsed back onto the host account.
+   */
+  environmentForLocation?: (location: ProjectLocation) => Record<string, string>;
 }
 
 export function createAcpGenericAdapter(
@@ -120,7 +127,14 @@ export function createAcpGenericAdapter(
           : isProbablyInstalled(commandConfig.binary)
         : false;
       const rawProbe = installed
-        ? await probeGenericCapabilities(ctx, cfg, instance, label, options.probeTimeoutMs)
+        ? await probeGenericCapabilities(
+            ctx,
+            cfg,
+            instance,
+            label,
+            options.probeTimeoutMs,
+            options.environmentForLocation,
+          )
         : undefined;
       const normalizedProbe =
         rawProbe && options.normalizeProbeResult
@@ -171,7 +185,12 @@ export function createAcpGenericAdapter(
       return undefined;
     },
     async createStructuredSession(input: CreateStructuredSessionInput) {
-      const command = buildGenericCommand(input.projectLocation, cfg, instance);
+      const command = buildGenericCommand(
+        input.projectLocation,
+        cfg,
+        instance,
+        options.environmentForLocation?.(input.projectLocation),
+      );
       return createAcpStructuredSession(
         command,
         {
@@ -193,7 +212,12 @@ export function createAcpGenericAdapter(
     },
     async buildAcpAuthCommand(ctx?: AgentEnvContext) {
       const location = detectProbeLocation(ctx);
-      return buildGenericCommand(location, cfg, instance);
+      return buildGenericCommand(
+        location,
+        cfg,
+        instance,
+        options.environmentForLocation?.(location),
+      );
     },
   };
 
@@ -281,9 +305,10 @@ async function probeGenericCapabilities(
   instance: AgentInstanceConfig,
   label: string,
   timeoutMs?: number,
+  environmentForLocation?: (location: ProjectLocation) => Record<string, string>,
 ): Promise<AcpProbeResult | undefined> {
   const location = detectProbeLocation(ctx);
-  const command = buildGenericCommand(location, cfg, instance);
+  const command = buildGenericCommand(location, cfg, instance, environmentForLocation?.(location));
   // On posix, route into the contained probe dir (TCC-safe); on WSL the linux
   // path is required by the agent; on Windows, keep the project's native path.
   const sessionCwd =
@@ -365,12 +390,13 @@ function buildGenericCommand(
     commandConfig.binary === "npx"
       ? applyAcpRegistryNpxArgsOverride(instance.id, commandConfig.args ?? [])
       : (commandConfig.args ?? []);
-  const env: Record<string, string> = { ...(commandConfig.env ?? {}), ...(extraEnv ?? {}) };
+  const env: Record<string, string> = { ...(commandConfig.env ?? {}) };
   if (instance.environment) {
     for (const [name, value] of Object.entries(instance.environment)) {
       env[name] = value.value;
     }
   }
+  Object.assign(env, extraEnv ?? {});
   // For "fixed" cwd, mirror the existing wrapper but pass the override.
   // Generic ACP almost always wants the project cwd; the fixedCwd escape
   // hatch is rare.

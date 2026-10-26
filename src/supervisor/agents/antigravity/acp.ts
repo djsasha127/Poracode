@@ -1,4 +1,9 @@
-import type { AgentCapability, AgentInstanceConfig, AgentStatus } from "@/shared/contracts";
+import type {
+  AgentCapability,
+  AgentInstanceConfig,
+  AgentStatus,
+  ProjectLocation,
+} from "@/shared/contracts";
 import { capabilitiesForPresentation } from "@/shared/agentSelection";
 import { resolveUnrestrictedPermissionConfig } from "@/shared/agents/unrestrictedPermissions";
 import { createAcpGenericAdapter } from "../acp-generic";
@@ -32,11 +37,19 @@ export function preferDefaultAntigravityAcpAuthMethod<T extends { id: string }>(
 
 export function createAntigravityAcpRuntime(
   instance: AgentInstanceConfig | undefined,
+  options: {
+    kind?: string;
+    label?: string;
+    environmentForLocation?: (location: ProjectLocation) => Record<string, string>;
+  } = {},
 ): AgentAdapter | undefined {
   if (!instance) return undefined;
   return createAcpGenericAdapter(instance, {
-    kind: "antigravity",
-    label: "Antigravity",
+    kind: options.kind ?? "antigravity",
+    label: options.label ?? "Antigravity",
+    ...(options.environmentForLocation
+      ? { environmentForLocation: options.environmentForLocation }
+      : {}),
     probeTimeoutMs: ANTIGRAVITY_ACP_PROBE_TIMEOUT_MS,
     normalizeProbeResult: (result) => {
       const authMethods = preferDefaultAntigravityAcpAuthMethod(result.authMethods);

@@ -88,6 +88,48 @@ describe("createAcpGenericAdapter", () => {
     });
   });
 
+  it("applies a profile environment to probes, auth, and live sessions", async () => {
+    const profileHome = "/tmp/poracode-acp-profile";
+    const adapter = createAcpGenericAdapter(
+      {
+        ...baseInstance,
+        environment: {
+          HOME: { value: "/host-home" },
+          GOOGLE_API_KEY: { value: "host-key", sensitive: true },
+        },
+      },
+      {
+        environmentForLocation: () => ({
+          HOME: profileHome,
+          GOOGLE_API_KEY: "",
+        }),
+      },
+    );
+
+    await adapter.detectInstall();
+    expect(vi.mocked(probeAcpCapabilities).mock.calls.at(-1)?.[3]?.env).toMatchObject({
+      HOME: profileHome,
+      GOOGLE_API_KEY: "",
+    });
+
+    const authCommand = await adapter.buildAcpAuthCommand?.();
+    expect(authCommand?.env).toMatchObject({ HOME: profileHome, GOOGLE_API_KEY: "" });
+
+    await adapter.createStructuredSession?.({
+      threadId: "thread-profile",
+      projectLocation:
+        process.platform === "win32"
+          ? { kind: "windows", path: process.cwd() }
+          : { kind: "posix", path: process.cwd() },
+      config: { model: "test" },
+      presentationMode: "gui",
+    });
+    expect(vi.mocked(createAcpStructuredSession).mock.calls.at(-1)?.[0].env).toMatchObject({
+      HOME: profileHome,
+      GOOGLE_API_KEY: "",
+    });
+  });
+
   it("forwards a provider text-stream extension to the shared ACP session", async () => {
     const textStreamExtension = { id: "vendor.taskNotifications" };
     const adapter = createAcpGenericAdapter(baseInstance, { textStreamExtension });

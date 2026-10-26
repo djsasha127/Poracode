@@ -120,7 +120,7 @@ export function buildAgentRegistryEntries(
     claude: createClaudeProfileAdapter,
     codex: createCodexProfileAdapter,
     cursor: createCursorProfileAdapter,
-    antigravity: createAntigravityProfileAdapter,
+    antigravity: (instance) => createAntigravityProfileAdapter(instance, antigravityAcpInstance),
     kimi: createKimiProfileAdapter,
   };
   const profileAdapters = userInstances
@@ -130,7 +130,10 @@ export function buildAgentRegistryEntries(
         return [
           {
             adapter: profileAdapterFactories[inst.driver]!(inst),
-            inputKey: instanceInputKey(inst),
+            inputKey:
+              inst.driver === "antigravity"
+                ? JSON.stringify([inst, antigravityAcpInstance ?? null])
+                : instanceInputKey(inst),
           },
         ];
       } catch (error) {

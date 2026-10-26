@@ -177,6 +177,35 @@ describe("profile agent registry", () => {
     expect(adapters.find((adapter) => adapter.kind === driver)).toBeDefined();
   });
 
+  it("shares the installed Antigravity ACP runtime without sharing profile credentials", async () => {
+    const adapters = buildAgentRegistry([
+      {
+        id: "work",
+        driver: "antigravity",
+        displayName: "Work",
+        config: { homeDir: "~/.poracode/antigravity-profiles/work" },
+      },
+      {
+        id: "antigravity-acp",
+        driver: "acp-generic",
+        version: "1.4.3",
+        config: { binary: "/bin/agy_acp_server.par", args: [] },
+      },
+    ]);
+    const profile = adapters.find((adapter) => adapter.kind === "antigravity:work");
+
+    expect(profile?.capabilities.presentationModes).toEqual(["terminal", "gui"]);
+    expect(await profile?.buildAcpAuthCommand?.()).toMatchObject({
+      env: {
+        HOME: expect.stringMatching(/\/\.poracode\/antigravity-profiles\/work$/u),
+        GEMINI_API_KEY: "",
+        GOOGLE_API_KEY: "",
+        GOOGLE_APPLICATION_CREDENTIALS: "",
+        AGY_ADC_AUTH: "",
+      },
+    });
+  });
+
   it("skips a Codex profile whose config is invalid instead of failing the registry", () => {
     const adapters = buildAgentRegistry([
       { id: "broken", driver: "codex", displayName: "Broken", config: {} },

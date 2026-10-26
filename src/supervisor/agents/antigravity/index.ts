@@ -67,10 +67,13 @@ const BLANKED_ANTIGRAVITY_HOST_CREDENTIALS: Readonly<Record<string, string>> = {
   AGY_ADC_AUTH: "",
 };
 
-export function createAntigravityProfileAdapter(instance: AgentInstanceConfig): AgentAdapter {
+export function createAntigravityProfileAdapter(
+  instance: AgentInstanceConfig,
+  acpInstance?: AgentInstanceConfig,
+): AgentAdapter {
   const config = parseAntigravityProfileInstanceConfig(instance.config);
   const label = instance.displayName ?? instance.id;
-  return createAntigravityAdapter(undefined, {
+  return createAntigravityAdapter(acpInstance, {
     kind: antigravityProfileKind(instance.id),
     label: `Antigravity ${label}`,
     homeDir: config.homeDir,
@@ -116,10 +119,14 @@ export function createAntigravityAdapter(
       authProbes: [profileAuthProbe],
     };
   };
-  // Profiles intentionally stay on the CLI runtime. Google's ACP server uses
-  // a machine-wide credential store, so attaching it here would collapse every
-  // profile back onto the main account.
-  const acpRuntime = profileHome ? undefined : createAntigravityAcpRuntime(acpInstance);
+  // ACP resolves its credential store from HOME. Give every profile the same
+  // isolated HOME and blank host credentials as its CLI lane, so selecting
+  // Chat cannot silently borrow the main Antigravity account.
+  const acpRuntime = createAntigravityAcpRuntime(acpInstance, {
+    kind,
+    label,
+    ...(profileHome ? { environmentForLocation: profileHome.envFor } : {}),
+  });
   const createAcpSession = acpRuntime?.createStructuredSession;
   const buildAcpAuthCommand = acpRuntime?.buildAcpAuthCommand;
   let terminalCapabilities: AgentCapability = defaultAntigravityCapabilities;
@@ -212,9 +219,7 @@ export function createAntigravityAdapter(
       ]);
       terminalCapabilities = status.capabilities;
       cliRuntimeInstalled = status.installed;
-      const merged = profileHome
-        ? { ...status, kind, label }
-        : applyAntigravityAcpStatus(status, acpStatus);
+      const merged = applyAntigravityAcpStatus(status, acpStatus);
       acpRuntimeInstalled = merged.runtimeVariants?.acp?.installed === true;
       capabilities = merged.capabilities;
       supportsSeparateModelEffort ||= Boolean(

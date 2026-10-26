@@ -483,15 +483,22 @@ describe("createAntigravityAdapter", () => {
 });
 
 describe("createAntigravityProfileAdapter", () => {
-  it("isolates OAuth, conversations, and one-shots under the profile HOME", () => {
+  it("isolates CLI and ACP OAuth under the profile HOME", async () => {
     const home = mkdtempSync(join(tmpdir(), "poracode-antigravity-profile-"));
     try {
-      const adapter = createAntigravityProfileAdapter({
-        id: "work",
-        driver: "antigravity",
-        displayName: "Work",
-        config: { homeDir: home },
-      });
+      const adapter = createAntigravityProfileAdapter(
+        {
+          id: "work",
+          driver: "antigravity",
+          displayName: "Work",
+          config: { homeDir: home },
+        },
+        {
+          id: "antigravity-acp",
+          driver: "acp-generic",
+          config: { binary: "/bin/agy_acp_server.par", args: [] },
+        },
+      );
       const launch = adapter.buildLaunchArgv(
         { kind: "posix", path: home },
         { model: ANTIGRAVITY_DEFAULT_MODEL_ID },
@@ -507,7 +514,7 @@ describe("createAntigravityProfileAdapter", () => {
       expect(adapter.kind).toBe("antigravity:work");
       expect(adapter.label).toBe("Antigravity Work");
       expect(adapter.firstClassAcpRegistryId).toBeUndefined();
-      expect(adapter.capabilities.presentationModes).toEqual(["terminal"]);
+      expect(adapter.capabilities.presentationModes).toEqual(["terminal", "gui"]);
       expect(launch.env).toMatchObject({
         HOME: home,
         GEMINI_API_KEY: "",
@@ -515,6 +522,15 @@ describe("createAntigravityProfileAdapter", () => {
         GOOGLE_APPLICATION_CREDENTIALS: "",
       });
       expect(oneShot?.env).toMatchObject({ HOME: home });
+      expect(await adapter.buildAcpAuthCommand?.()).toMatchObject({
+        env: {
+          HOME: home,
+          GEMINI_API_KEY: "",
+          GOOGLE_API_KEY: "",
+          GOOGLE_APPLICATION_CREDENTIALS: "",
+          AGY_ADC_AUTH: "",
+        },
+      });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
