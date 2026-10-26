@@ -282,6 +282,11 @@ msgstr "{0} de {1} pasos"
 msgid "{0} of {1} tokens priced"
 msgstr "{0} de {1} tokens con precio"
 
+#. placeholder {0}: props.descriptor.providerName
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "{0} profile saved."
+msgstr "Perfil de {0} guardado."
+
 #. placeholder {0}: cell.count
 #: src/renderer/views/ProfileOverlay/parts/ActivityHeatmap.tsx
 msgid "{0} prompt - {when}"
@@ -309,6 +314,12 @@ msgstr "{0} ejecución"
 #: src/renderer/views/ProfileOverlay/parts/PluginUsage.tsx
 msgid "{0} runs"
 msgstr "{0} ejecuciones"
+
+#. placeholder {0}: props.descriptor.providerName
+#. placeholder {1}: props.descriptor.envVar
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "{0} runs this profile with {1} set to the directory below. Use Login above to sign this profile in to its own account."
+msgstr "{0} ejecuta este perfil con {1} configurado en el directorio de abajo. Usa Iniciar sesión arriba para acceder con una cuenta propia."
 
 #. placeholder {0}: threads.length
 #: src/mobile/views/ThreadsView.tsx
@@ -1359,6 +1370,11 @@ msgstr "Antigravity"
 msgid "Antigravity ACP"
 msgstr "Antigravity ACP"
 
+#. placeholder {0}: route.label
+#: src/renderer/actions/threadLaunchActions.ts
+msgid "Antigravity quota is exhausted. Starting with {0}."
+msgstr "La cuota de Antigravity se ha agotado. Iniciando con {0}."
+
 #: src/renderer/views/SettingsOverlay/parts/CrossagentRoutingSection.tsx
 msgid "Anything currently unavailable — a provider, model, reasoning level, or Fast mode — is skipped automatically. Unchecked providers and models are skipped until re-checked."
 msgstr "Todo lo que no esté disponible actualmente — un proveedor, modelo, nivel de razonamiento o modo Fast — se omite automáticamente. Los proveedores y modelos no seleccionados se omiten hasta que se vuelvan a seleccionar."
@@ -2152,10 +2168,12 @@ msgstr "No se pueden cambiar las ramas — confirma o guarda tus cambios en stas
 msgid "Category"
 msgstr "Categoría"
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Change home"
 msgstr "Cambiar home"
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Change profile home?"
 msgstr "¿Cambiar el home del perfil?"
@@ -5781,6 +5799,7 @@ msgstr "Historial"
 msgid "Home"
 msgstr "Inicio"
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Home directory"
 msgstr "Directorio home"
@@ -7318,6 +7337,7 @@ msgstr "my-mcp-server"
 #: src/renderer/components/workspace/WorkspaceNameDialog.tsx
 #: src/renderer/views/ProfileOverlay/parts/EditProfileDialog.tsx
 #: src/renderer/views/SettingsOverlay/parts/ClaudeProfileSettings.tsx
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CursorProfileIdentity.tsx
 #: src/renderer/views/SettingsOverlay/parts/RemoteServersSettings.tsx
@@ -7467,6 +7487,10 @@ msgstr "modelo nuevo"
 #: src/renderer/views/SettingsOverlay/parts/RemoteAccessSettings.tsx
 msgid "New phones, tablets, and browsers appear here after pairing."
 msgstr "Los nuevos teléfonos, tabletas y navegadores aparecerán aquí después de emparejarlos."
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "New profile home directory"
+msgstr "Nuevo directorio principal del perfil"
 
 #: src/renderer/views/SettingsOverlay/parts/AgentProfileList.tsx
 msgid "New profile name"
@@ -9195,9 +9219,18 @@ msgstr "Perfil"
 msgid "Profile {displayName} added."
 msgstr "Perfil {displayName} añadido."
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Profile home"
 msgstr "Home del perfil"
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Profile home directory"
+msgstr "Directorio principal del perfil"
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Profile name"
+msgstr "Nombre del perfil"
 
 #: src/renderer/views/SettingsOverlay/parts/AgentProfileList.tsx
 msgid "Profile removed, but statuses could not be refreshed."
@@ -9783,8 +9816,10 @@ msgstr "Código QR de emparejamiento de acceso remoto"
 msgid "Remote access port {occupiedPort} is already in use. Stop the other server, then retry."
 msgstr "El puerto de acceso remoto {occupiedPort} ya está en uso. Detén el otro servidor y vuelve a intentarlo."
 
+#: src/renderer/views/MainView/parts/Sidebar/parts/sidebarShortcuts.tsx
 #: src/renderer/views/SettingsOverlay/parts/RemoteServersSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/SettingsSidebar.tsx
+#: src/renderer/views/SettingsOverlay/parts/SidebarShortcutsSelector.tsx
 msgid "Remote Environments"
 msgstr "Entornos remotos"
 
@@ -9970,6 +10005,10 @@ msgstr "¿Eliminar worktree?"
 #: src/renderer/views/SettingsOverlay/parts/CursorProfileSettings.tsx
 msgid "Removing {profileName} deletes its saved API key. Threads that use this profile will no longer find their agent."
 msgstr "Al eliminar {profileName} se borra su clave de API guardada. Los hilos que usan este perfil ya no encontrarán su agente."
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Removing {profileName} drops it from Poracode. Its home directory and credentials stay on disk."
+msgstr "Al eliminar {profileName}, se quita de Poracode. Su directorio principal y sus credenciales permanecen en el disco."
 
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Removing {profileName} drops it from Poracode. Its home directory and the Codex credentials inside it stay on disk."
@@ -10424,6 +10463,15 @@ msgstr "Ejecuta una segunda cuenta de Codex desde su propio CODEX_HOME. Cada per
 msgid "Run actions"
 msgstr "Acciones de ejecución"
 
+#. placeholder {0}: descriptor.providerName
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Run additional {0} accounts from isolated home directories. Each profile signs in separately."
+msgstr "Ejecuta cuentas adicionales de {0} desde directorios principales aislados. Cada perfil inicia sesión por separado."
+
+#: src/renderer/views/SettingsOverlay/parts/AntigravityProfileSettings.tsx
+msgid "Run additional Antigravity CLI accounts from isolated homes. Each profile signs in separately and keeps its own conversations and quota. Chat remains on the main Antigravity account."
+msgstr "Ejecuta cuentas adicionales de Antigravity CLI desde directorios personales aislados. Cada perfil inicia sesión por separado y conserva sus propias conversaciones y cuota. Chat permanece en la cuenta principal de Antigravity."
+
 #: src/renderer/views/SchedulesView/ScheduleEditor.tsx
 msgid "Run at"
 msgstr "Ejecutar el"
@@ -10533,6 +10581,7 @@ msgstr "Saturación y brillo"
 #: src/renderer/views/FileEditorOverlay/parts/FileEditorPane/parts/EditorToolbar.tsx
 #: src/renderer/views/ProfileOverlay/parts/EditProfileDialog.tsx
 #: src/renderer/views/SettingsOverlay/parts/ClaudeProfileSettings.tsx
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/ProviderMcpServersSection.tsx
 #: src/renderer/views/SettingsOverlay/parts/RemoteServersSettings.tsx
@@ -10642,8 +10691,6 @@ msgid "Scheduled tasks on this desktop"
 msgstr "Tareas programadas en este escritorio"
 
 #: src/mobile/settingsSections.ts
-#: src/renderer/views/MainView/parts/Sidebar/parts/sidebarShortcuts.tsx
-#: src/renderer/views/SettingsOverlay/parts/SidebarShortcutsSelector.tsx
 msgid "Schedules"
 msgstr "Programaciones"
 
@@ -12260,6 +12307,10 @@ msgstr "El servidor remoto de Poracode no devolvió ninguna credencial de empare
 msgid "The remote server returned no pairing credential."
 msgstr "El servidor remoto no devolvió credenciales de emparejamiento."
 
+#: src/renderer/state/remoteServersStore.ts
+msgid "The remote session has expired."
+msgstr "La sesión remota ha caducado."
+
 #: src/renderer/i18n/sharedMessages.ts
 msgid "The replacement message could not be sent."
 msgstr "No se pudo enviar el mensaje de reemplazo."
@@ -12327,6 +12378,10 @@ msgstr "El skill permanece sincronizado con su origen y deja de funcionar si est
 #: src/renderer/components/skills/SkillMarketplaceModal.tsx
 msgid "The skills marketplace couldn't be loaded."
 msgstr "No se pudo cargar el marketplace de skills."
+
+#: src/renderer/state/remoteServersStore.ts
+msgid "The SSH host returned a different remote server."
+msgstr "El host SSH devolvió un servidor remoto diferente."
 
 #: src/renderer/i18n/sharedMessages.ts
 msgid "The SSH tunnel reached an incompatible Poracode server."
@@ -12528,6 +12583,7 @@ msgstr "Se ignoraron los ajustes de Poracode de este plugin porque no son válid
 msgid "This plugin's skills could not be read."
 msgstr "No se pudieron leer las skills de este plugin."
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "This profile already has threads. Their sessions stay in the current home directory, so they can't be resumed after you change it."
 msgstr "Este perfil ya tiene hilos. Sus sesiones permanecen en el directorio home actual, por lo que no podrán reanudarse después de cambiarlo."

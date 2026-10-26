@@ -282,6 +282,11 @@ msgstr "{0} trên {1} bước"
 msgid "{0} of {1} tokens priced"
 msgstr "Đã định giá {0} trên {1} token"
 
+#. placeholder {0}: props.descriptor.providerName
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "{0} profile saved."
+msgstr "Đã lưu hồ sơ {0}."
+
 #. placeholder {0}: cell.count
 #: src/renderer/views/ProfileOverlay/parts/ActivityHeatmap.tsx
 msgid "{0} prompt - {when}"
@@ -309,6 +314,12 @@ msgstr "{0} lần chạy"
 #: src/renderer/views/ProfileOverlay/parts/PluginUsage.tsx
 msgid "{0} runs"
 msgstr "{0} lần chạy"
+
+#. placeholder {0}: props.descriptor.providerName
+#. placeholder {1}: props.descriptor.envVar
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "{0} runs this profile with {1} set to the directory below. Use Login above to sign this profile in to its own account."
+msgstr "{0} chạy hồ sơ này với {1} trỏ đến thư mục bên dưới. Dùng Đăng nhập ở trên để đăng nhập hồ sơ bằng tài khoản riêng."
 
 #. placeholder {0}: threads.length
 #: src/mobile/views/ThreadsView.tsx
@@ -1359,6 +1370,11 @@ msgstr "Antigravity"
 msgid "Antigravity ACP"
 msgstr "Antigravity ACP"
 
+#. placeholder {0}: route.label
+#: src/renderer/actions/threadLaunchActions.ts
+msgid "Antigravity quota is exhausted. Starting with {0}."
+msgstr "Hạn mức Antigravity đã hết. Đang bắt đầu bằng {0}."
+
 #: src/renderer/views/SettingsOverlay/parts/CrossagentRoutingSection.tsx
 msgid "Anything currently unavailable — a provider, model, reasoning level, or Fast mode — is skipped automatically. Unchecked providers and models are skipped until re-checked."
 msgstr "Mọi thứ hiện không khả dụng — nhà cung cấp, mô hình, mức suy luận hoặc chế độ Fast — sẽ tự động được bỏ qua. Nhà cung cấp và mô hình không được chọn sẽ bị bỏ qua cho đến khi được chọn lại."
@@ -2152,10 +2168,12 @@ msgstr "Không thể chuyển nhánh — trước tiên hãy commit hoặc stash
 msgid "Category"
 msgstr "Danh mục"
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Change home"
 msgstr "Thay đổi thư mục"
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Change profile home?"
 msgstr "Thay đổi thư mục hồ sơ?"
@@ -5781,6 +5799,7 @@ msgstr "Lịch sử"
 msgid "Home"
 msgstr "Trang chủ"
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Home directory"
 msgstr "Thư mục home"
@@ -7318,6 +7337,7 @@ msgstr "my-mcp-server"
 #: src/renderer/components/workspace/WorkspaceNameDialog.tsx
 #: src/renderer/views/ProfileOverlay/parts/EditProfileDialog.tsx
 #: src/renderer/views/SettingsOverlay/parts/ClaudeProfileSettings.tsx
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CursorProfileIdentity.tsx
 #: src/renderer/views/SettingsOverlay/parts/RemoteServersSettings.tsx
@@ -7467,6 +7487,10 @@ msgstr "mô hình mới"
 #: src/renderer/views/SettingsOverlay/parts/RemoteAccessSettings.tsx
 msgid "New phones, tablets, and browsers appear here after pairing."
 msgstr "Điện thoại, máy tính bảng và trình duyệt mới sẽ xuất hiện ở đây sau khi ghép đôi."
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "New profile home directory"
+msgstr "Thư mục chính mới của hồ sơ"
 
 #: src/renderer/views/SettingsOverlay/parts/AgentProfileList.tsx
 msgid "New profile name"
@@ -9195,9 +9219,18 @@ msgstr "Hồ sơ"
 msgid "Profile {displayName} added."
 msgstr "Đã thêm hồ sơ {displayName}."
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Profile home"
 msgstr "Thư mục hồ sơ"
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Profile home directory"
+msgstr "Thư mục chính của hồ sơ"
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Profile name"
+msgstr "Tên hồ sơ"
 
 #: src/renderer/views/SettingsOverlay/parts/AgentProfileList.tsx
 msgid "Profile removed, but statuses could not be refreshed."
@@ -9783,8 +9816,10 @@ msgstr "Mã QR ghép đôi truy cập từ xa"
 msgid "Remote access port {occupiedPort} is already in use. Stop the other server, then retry."
 msgstr "Cổng truy cập từ xa {occupiedPort} đang được sử dụng. Hãy dừng máy chủ kia rồi thử lại."
 
+#: src/renderer/views/MainView/parts/Sidebar/parts/sidebarShortcuts.tsx
 #: src/renderer/views/SettingsOverlay/parts/RemoteServersSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/SettingsSidebar.tsx
+#: src/renderer/views/SettingsOverlay/parts/SidebarShortcutsSelector.tsx
 msgid "Remote Environments"
 msgstr "Môi trường từ xa"
 
@@ -9970,6 +10005,10 @@ msgstr "Xóa worktree?"
 #: src/renderer/views/SettingsOverlay/parts/CursorProfileSettings.tsx
 msgid "Removing {profileName} deletes its saved API key. Threads that use this profile will no longer find their agent."
 msgstr "Xóa {profileName} sẽ xóa luôn khóa API đã lưu. Các luồng dùng hồ sơ này sẽ không còn tìm thấy tác nhân của chúng."
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Removing {profileName} drops it from Poracode. Its home directory and credentials stay on disk."
+msgstr "Xóa {profileName} sẽ gỡ hồ sơ khỏi Poracode. Thư mục chính và thông tin đăng nhập vẫn còn trên đĩa."
 
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Removing {profileName} drops it from Poracode. Its home directory and the Codex credentials inside it stay on disk."
@@ -10424,6 +10463,15 @@ msgstr "Chạy tài khoản Codex thứ hai từ CODEX_HOME riêng. Mỗi hồ s
 msgid "Run actions"
 msgstr "Thao tác lượt chạy"
 
+#. placeholder {0}: descriptor.providerName
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Run additional {0} accounts from isolated home directories. Each profile signs in separately."
+msgstr "Chạy thêm tài khoản {0} từ các thư mục chính tách biệt. Mỗi hồ sơ đăng nhập riêng."
+
+#: src/renderer/views/SettingsOverlay/parts/AntigravityProfileSettings.tsx
+msgid "Run additional Antigravity CLI accounts from isolated homes. Each profile signs in separately and keeps its own conversations and quota. Chat remains on the main Antigravity account."
+msgstr "Chạy thêm tài khoản Antigravity CLI từ các thư mục nhà riêng biệt. Mỗi hồ sơ đăng nhập riêng và giữ cuộc trò chuyện cùng hạn mức của mình. Chat vẫn dùng tài khoản Antigravity chính."
+
 #: src/renderer/views/SchedulesView/ScheduleEditor.tsx
 msgid "Run at"
 msgstr "Chạy lúc"
@@ -10533,6 +10581,7 @@ msgstr "Độ bão hòa và độ sáng"
 #: src/renderer/views/FileEditorOverlay/parts/FileEditorPane/parts/EditorToolbar.tsx
 #: src/renderer/views/ProfileOverlay/parts/EditProfileDialog.tsx
 #: src/renderer/views/SettingsOverlay/parts/ClaudeProfileSettings.tsx
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/ProviderMcpServersSection.tsx
 #: src/renderer/views/SettingsOverlay/parts/RemoteServersSettings.tsx
@@ -10642,8 +10691,6 @@ msgid "Scheduled tasks on this desktop"
 msgstr "Tác vụ đã lên lịch trên máy tính này"
 
 #: src/mobile/settingsSections.ts
-#: src/renderer/views/MainView/parts/Sidebar/parts/sidebarShortcuts.tsx
-#: src/renderer/views/SettingsOverlay/parts/SidebarShortcutsSelector.tsx
 msgid "Schedules"
 msgstr "Lịch biểu"
 
@@ -12260,6 +12307,10 @@ msgstr "Máy chủ Poracode từ xa không trả về thông tin xác thực gh�
 msgid "The remote server returned no pairing credential."
 msgstr "Máy chủ từ xa không trả về thông tin xác thực ghép nối."
 
+#: src/renderer/state/remoteServersStore.ts
+msgid "The remote session has expired."
+msgstr "Phiên từ xa đã hết hạn."
+
 #: src/renderer/i18n/sharedMessages.ts
 msgid "The replacement message could not be sent."
 msgstr "Không thể gửi tin nhắn thay thế."
@@ -12327,6 +12378,10 @@ msgstr "Skill luôn được đồng bộ hóa với nguồn và sẽ ngừng ho
 #: src/renderer/components/skills/SkillMarketplaceModal.tsx
 msgid "The skills marketplace couldn't be loaded."
 msgstr "Không thể tải marketplace skill."
+
+#: src/renderer/state/remoteServersStore.ts
+msgid "The SSH host returned a different remote server."
+msgstr "Máy chủ SSH đã trả về một máy chủ từ xa khác."
 
 #: src/renderer/i18n/sharedMessages.ts
 msgid "The SSH tunnel reached an incompatible Poracode server."
@@ -12528,6 +12583,7 @@ msgstr "Cài đặt Poracode của plugin này bị bỏ qua vì không hợp l�
 msgid "This plugin's skills could not be read."
 msgstr "Không đọc được các skill của plugin này."
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "This profile already has threads. Their sessions stay in the current home directory, so they can't be resumed after you change it."
 msgstr "Hồ sơ này đã có luồng. Các phiên của chúng vẫn nằm trong thư mục home hiện tại, nên sẽ không thể tiếp tục sau khi bạn thay đổi."

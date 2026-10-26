@@ -14,7 +14,7 @@
 import type { AgentInstanceConfig } from "@/shared/contracts";
 import { ANTIGRAVITY_ACP_REGISTRY_ID } from "@/shared/agents/antigravity";
 import { createAcpGenericAdapter } from "./acp-generic";
-import { createAntigravityAdapter } from "./antigravity";
+import { createAntigravityAdapter, createAntigravityProfileAdapter } from "./antigravity";
 import type { AgentAdapter } from "./base";
 import { createClaudeAdapter, createClaudeProfileAdapter } from "./claude";
 import { createCommandCodeAdapter } from "./commandcode";
@@ -24,7 +24,7 @@ import { createCursorAdapter, createCursorProfileAdapter } from "./cursor";
 import { createFactoryAdapter, createFactoryAcpRegistryAdapter } from "./factory";
 import { createGeminiAdapter } from "./gemini";
 import { createGrokAdapter } from "./grok";
-import { createKimiAdapter } from "./kimi";
+import { createKimiAdapter, createKimiProfileAdapter } from "./kimi";
 import { createMuseAdapter } from "./muse";
 import { createOpenCodeAdapter } from "./opencode";
 import { createOpenCode2Adapter } from "./opencode2";
@@ -120,6 +120,8 @@ export function buildAgentRegistryEntries(
     claude: createClaudeProfileAdapter,
     codex: createCodexProfileAdapter,
     cursor: createCursorProfileAdapter,
+    antigravity: createAntigravityProfileAdapter,
+    kimi: createKimiProfileAdapter,
   };
   const profileAdapters = userInstances
     .filter((inst) => inst.enabled !== false && profileAdapterFactories[inst.driver] !== undefined)

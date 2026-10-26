@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ProjectLocation } from "@/shared/contracts";
-import { batchWslCommandsAsync, quotePosixShellArg } from "../base";
+import { batchWslCommandsAsync, buildPosixExportPrefix, quotePosixShellArg } from "../base";
 import { nativeKimiHomePath } from "./paths";
 
 /**
@@ -63,9 +63,12 @@ function trustMarkerRecord(root: string): string {
   return JSON.stringify({ root, trustedAt: Date.now() });
 }
 
-function ensureNativeKimiWorkspaceTrust(projectPath: string): boolean {
+function ensureNativeKimiWorkspaceTrust(
+  projectPath: string,
+  env?: Record<string, string>,
+): boolean {
   const root = resolveTrustRoot(projectPath);
-  const markerPath = join(nativeKimiHomePath(), "workspace-trust", encodeKimiWorkDirKey(root));
+  const markerPath = join(nativeKimiHomePath(env), "workspace-trust", encodeKimiWorkDirKey(root));
   try {
     if (existsSync(markerPath)) return true;
     mkdirSync(dirname(markerPath), { recursive: true });
@@ -82,11 +85,16 @@ function ensureNativeKimiWorkspaceTrust(projectPath: string): boolean {
 // WSL: the marker lives inside the distro, and a profile-set KIMI_CODE_HOME
 // only exists in the distro's login env — expand it there (the same way
 // sessionFiles.ts honors it) instead of reading the Windows process env.
-async function ensureWslKimiWorkspaceTrust(distro: string, linuxPath: string): Promise<boolean> {
+async function ensureWslKimiWorkspaceTrust(
+  distro: string,
+  linuxPath: string,
+  env?: Record<string, string>,
+): Promise<boolean> {
+  const prefix = buildPosixExportPrefix(env);
   // Kimi hashes its own post-chdir cwd, which resolves symlinks — mirror that
   // with readlink before deriving the key.
   const [resolved] = await batchWslCommandsAsync(distro, [
-    `readlink -f -- ${quotePosixShellArg(linuxPath)} 2>/dev/null || printf %s ${quotePosixShellArg(linuxPath)}`,
+    `${prefix}readlink -f -- ${quotePosixShellArg(linuxPath)} 2>/dev/null || printf %s ${quotePosixShellArg(linuxPath)}`,
   ]);
   const trimmed = resolved?.ok ? resolved.stdout.trim() : "";
   const root = trimmed.length > 0 ? trimmed : linuxPath;
@@ -101,7 +109,7 @@ async function ensureWslKimiWorkspaceTrust(distro: string, linuxPath: string): P
     // round trips on every subsequent launch of the same folder.
     'if [ -e "$lc_marker" ]; then printf trusted; fi',
   ].join("; ");
-  const [written] = await batchWslCommandsAsync(distro, [script]);
+  const [written] = await batchWslCommandsAsync(distro, [`${prefix}${script}`]);
   return written?.ok === true && written.stdout.trim() === "trusted";
 }
 
@@ -111,8 +119,15 @@ async function ensureWslKimiWorkspaceTrust(distro: string, linuxPath: string): P
 // runs are recorded, so a transient failure is retried on the next launch.
 const trustedWorkDirs = new Set<string>();
 
-function trustCacheKey(location: ProjectLocation, workDir: string): string {
-  return location.kind === "wsl" ? `wsl:${location.distro}:${workDir}` : `native:${workDir}`;
+function trustCacheKey(
+  location: ProjectLocation,
+  workDir: string,
+  env?: Record<string, string>,
+): string {
+  const home = env?.KIMI_CODE_HOME ?? "default";
+  return location.kind === "wsl"
+    ? `wsl:${location.distro}:${home}:${workDir}`
+    : `native:${home}:${workDir}`;
 }
 
 /**
@@ -125,15 +140,16 @@ function trustCacheKey(location: ProjectLocation, workDir: string): string {
 export async function ensureKimiWorkspaceTrust(
   location: ProjectLocation,
   workDir?: string,
+  env?: Record<string, string>,
 ): Promise<void> {
   const target = workDir ?? (location.kind === "wsl" ? location.linuxPath : location.path);
-  const cacheKey = trustCacheKey(location, target);
+  const cacheKey = trustCacheKey(location, target, env);
   if (trustedWorkDirs.has(cacheKey)) return;
   try {
     const trusted =
       location.kind === "wsl"
-        ? await ensureWslKimiWorkspaceTrust(location.distro, target)
-        : ensureNativeKimiWorkspaceTrust(target);
+        ? await ensureWslKimiWorkspaceTrust(location.distro, target, env)
+        : ensureNativeKimiWorkspaceTrust(target, env);
     if (trusted) trustedWorkDirs.add(cacheKey);
   } catch {
     // Best effort (see ensureNativeKimiWorkspaceTrust).

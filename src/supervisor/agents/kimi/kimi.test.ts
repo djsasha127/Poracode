@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { ProjectLocation, ThreadConfig } from "@/shared/contracts";
 import { resolveSharedUpdateCommand } from "@/shared/agents/updateResolver";
 import { createKnownSessionRef } from "../base";
-import { createKimiAdapter, resolveKimiEmptyResponseError } from "./index";
+import {
+  createKimiAdapter,
+  createKimiProfileAdapter,
+  resolveKimiEmptyResponseError,
+} from "./index";
 import { buildKimiLogoutCommand } from "./kimiLogout";
 
 const location = { kind: "windows", path: "C:\\repo" } as ProjectLocation;
@@ -154,6 +158,28 @@ describe("createKimiAdapter launch / resume argv", () => {
       discoveredAt: "",
     });
     expect(result.args).toContain("--continue");
+  });
+});
+
+describe("createKimiProfileAdapter", () => {
+  it("isolates launch and resume state in KIMI_CODE_HOME", () => {
+    const adapter = createKimiProfileAdapter({
+      id: "reserve",
+      driver: "kimi",
+      displayName: "Reserve",
+      config: { homeDir: "~/.poracode/kimi-profiles/reserve" },
+    });
+    const launch = adapter.buildLaunchArgv(location, config, "");
+    const resume = adapter.buildResumeArgv(location, config, "", createKnownSessionRef("sess-123"));
+
+    expect(adapter.kind).toBe("kimi:reserve");
+    expect(adapter.label).toBe("Kimi Reserve");
+    expect(launch.env).toMatchObject({
+      KIMI_CODE_HOME: expect.stringContaining(".poracode/kimi-profiles/reserve"),
+      KIMI_API_KEY: "",
+      MOONSHOT_API_KEY: "",
+    });
+    expect(resume.env?.KIMI_CODE_HOME).toBe(launch.env?.KIMI_CODE_HOME);
   });
 });
 

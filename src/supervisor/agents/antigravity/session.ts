@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ProjectLocation } from "@/shared/contracts";
+import { toWslUncPath } from "@/shared/wsl";
 import {
   getCachedWslHomeDirectory,
   listSessionDir,
@@ -22,16 +23,35 @@ const ANTIGRAVITY_PARENT_SUBPATH = ".gemini";
 const CONVERSATIONS_SUBPATH = `${ANTIGRAVITY_CONFIG_SUBPATH}/conversations`;
 const LAST_CONVERSATIONS_SUBPATH = `${ANTIGRAVITY_CONFIG_SUBPATH}/cache/last_conversations.json`;
 
-export function resolveAntigravityConversationsDir(location: ProjectLocation): string | undefined {
-  return resolveAgentHomeSubpath(location, CONVERSATIONS_SUBPATH);
+function resolveProfileHomeSubpath(
+  location: ProjectLocation,
+  subpath: string,
+  profileHome?: string,
+): string | undefined {
+  if (!profileHome) return resolveAgentHomeSubpath(location, subpath);
+  const target = `${profileHome.replace(/[\\/]+$/u, "")}/${subpath.replace(/^[\\/]+/u, "")}`;
+  return location.kind === "wsl" ? toWslUncPath(location.distro, target) : target;
 }
 
-export function resolveAntigravityConfigDir(location: ProjectLocation): string | undefined {
-  return resolveAgentHomeSubpath(location, ANTIGRAVITY_CONFIG_SUBPATH);
+export function resolveAntigravityConversationsDir(
+  location: ProjectLocation,
+  profileHome?: string,
+): string | undefined {
+  return resolveProfileHomeSubpath(location, CONVERSATIONS_SUBPATH, profileHome);
 }
 
-export function antigravityConfigDirExists(location: ProjectLocation): boolean {
-  const dir = resolveAntigravityConfigDir(location);
+export function resolveAntigravityConfigDir(
+  location: ProjectLocation,
+  profileHome?: string,
+): string | undefined {
+  return resolveProfileHomeSubpath(location, ANTIGRAVITY_CONFIG_SUBPATH, profileHome);
+}
+
+export function antigravityConfigDirExists(
+  location: ProjectLocation,
+  profileHome?: string,
+): boolean {
+  const dir = resolveAntigravityConfigDir(location, profileHome);
   return Boolean(dir && existsSync(dir));
 }
 
@@ -48,8 +68,9 @@ const CONVERSATION_FILE_RE = /\.(pb|db)$/;
 
 function readAntigravityConversationFiles(
   location: ProjectLocation,
+  profileHome?: string,
 ): AntigravityConversationFile[] {
-  const dir = resolveAntigravityConversationsDir(location);
+  const dir = resolveAntigravityConversationsDir(location, profileHome);
   if (!dir || !existsSync(dir)) return [];
   try {
     return readdirSync(dir)
@@ -70,7 +91,11 @@ function readAntigravityConversationFiles(
 async function resolveAntigravityHomeSubpath(
   location: ProjectLocation,
   subpath: string,
+  profileHome?: string,
 ): Promise<string | undefined> {
+  if (profileHome) {
+    return `${profileHome.replace(/[\\/]+$/u, "")}/${subpath.replace(/^[\\/]+/u, "")}`;
+  }
   if (location.kind !== "wsl") return resolveAgentHomeSubpath(location, subpath);
   const home = await resolveWslHomeDirectoryAsync(location.distro);
   if (!home) return undefined;
@@ -79,9 +104,10 @@ async function resolveAntigravityHomeSubpath(
 
 async function readAntigravityConversationFilesAsync(
   location: ProjectLocation,
+  profileHome?: string,
 ): Promise<AntigravityConversationFile[]> {
-  if (location.kind !== "wsl") return readAntigravityConversationFiles(location);
-  const dir = await resolveAntigravityHomeSubpath(location, CONVERSATIONS_SUBPATH);
+  if (location.kind !== "wsl") return readAntigravityConversationFiles(location, profileHome);
+  const dir = await resolveAntigravityHomeSubpath(location, CONVERSATIONS_SUBPATH, profileHome);
   if (!dir) return [];
   const entries = await listSessionDir(location, dir);
   if (!entries) return [];
@@ -98,8 +124,11 @@ async function readAntigravityConversationFilesAsync(
   });
 }
 
-export function readAntigravityConversationIds(location: ProjectLocation): Set<string> {
-  return new Set(readAntigravityConversationFiles(location).map((file) => file.id));
+export function readAntigravityConversationIds(
+  location: ProjectLocation,
+  profileHome?: string,
+): Set<string> {
+  return new Set(readAntigravityConversationFiles(location, profileHome).map((file) => file.id));
 }
 
 /**
@@ -193,8 +222,9 @@ export function readNewestAntigravityConversationForCwd(
   location: ProjectLocation,
   previousIds: ReadonlySet<string>,
   cwd: string,
+  profileHome?: string,
 ): string | undefined {
-  const fresh = readAntigravityConversationFiles(location)
+  const fresh = readAntigravityConversationFiles(location, profileHome)
     .filter((file) => !previousIds.has(file.id))
     .sort((left, right) => right.mtimeMs - left.mtimeMs);
   for (const file of fresh) {
@@ -208,8 +238,9 @@ export async function readNewestAntigravityConversationIdAsync(
   location: ProjectLocation,
   previousIds: ReadonlySet<string>,
   minMtimeMs = 0,
+  profileHome?: string,
 ): Promise<string | undefined> {
-  const files = await readAntigravityConversationFilesAsync(location);
+  const files = await readAntigravityConversationFilesAsync(location, profileHome);
   return files
     .filter((file) => !previousIds.has(file.id))
     .filter((file) => file.mtimeMs >= minMtimeMs)
@@ -222,8 +253,9 @@ export async function readNewestAntigravityConversationIdAsync(
 export function readAntigravityLastConversationForCwd(
   location: ProjectLocation,
   cwd: string,
+  profileHome?: string,
 ): string | undefined {
-  const path = resolveAgentHomeSubpath(location, LAST_CONVERSATIONS_SUBPATH);
+  const path = resolveProfileHomeSubpath(location, LAST_CONVERSATIONS_SUBPATH, profileHome);
   if (!path) return undefined;
   try {
     const map = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
@@ -237,9 +269,16 @@ export function readAntigravityLastConversationForCwd(
 export async function readAntigravityLastConversationForCwdAsync(
   location: ProjectLocation,
   cwd: string,
+  profileHome?: string,
 ): Promise<string | undefined> {
-  if (location.kind !== "wsl") return readAntigravityLastConversationForCwd(location, cwd);
-  const path = await resolveAntigravityHomeSubpath(location, LAST_CONVERSATIONS_SUBPATH);
+  if (location.kind !== "wsl") {
+    return readAntigravityLastConversationForCwd(location, cwd, profileHome);
+  }
+  const path = await resolveAntigravityHomeSubpath(
+    location,
+    LAST_CONVERSATIONS_SUBPATH,
+    profileHome,
+  );
   if (!path) return undefined;
   try {
     const raw = await readSessionFileText(location, path);
@@ -264,13 +303,16 @@ export function locationCwd(location: ProjectLocation): string {
  * Watching the config root catches both cache/last_conversations.json
  * writes (cwd → conversation map) and conversations/ writes (payloads).
  */
-export function resolveAntigravityWatchPaths(location: ProjectLocation): string[] {
+export function resolveAntigravityWatchPaths(
+  location: ProjectLocation,
+  profileHome?: string,
+): string[] {
   if (location.kind === "wsl") {
-    const home = getCachedWslHomeDirectory(location.distro);
+    const home = profileHome ?? getCachedWslHomeDirectory(location.distro);
     if (!home) return [];
     return [`${home}/${ANTIGRAVITY_CONFIG_SUBPATH}`, `${home}/${ANTIGRAVITY_PARENT_SUBPATH}`];
   }
-  const home = homedir();
+  const home = profileHome ?? homedir();
   const paths = [
     join(home, ...ANTIGRAVITY_CONFIG_SUBPATH.split("/")),
     join(home, ANTIGRAVITY_PARENT_SUBPATH),

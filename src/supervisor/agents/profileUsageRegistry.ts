@@ -1,5 +1,9 @@
 import type { HostPort, UsageSnapshot } from "@poracode/agents-usage";
 import type { SharedSettings } from "@/shared/settings";
+import {
+  collectAntigravityProfileUsage,
+  readAntigravityUsageProfiles,
+} from "./antigravity/antigravityUsageProfiles";
 import { collectCodexProfile, readCodexUsageProfiles } from "./codex/codexUsageProfiles";
 
 /** Provider-owned profile collectors. The runtime does not parse profile payloads. */
@@ -13,6 +17,13 @@ const factories: ReadonlyArray<(settings: SharedSettings) => Map<string, Profile
       [...readCodexUsageProfiles(settings)].map(([id, profile]) => [
         id,
         { collect: (host: HostPort) => collectCodexProfile(profile, host) },
+      ]),
+    ),
+  (settings) =>
+    new Map(
+      [...readAntigravityUsageProfiles(settings)].map(([id, profile]) => [
+        id,
+        { collect: (host: HostPort) => collectAntigravityProfileUsage(profile, host) },
       ]),
     ),
 ];

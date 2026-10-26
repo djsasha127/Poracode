@@ -1,4 +1,4 @@
-import { CalendarClock, Workflow } from "lucide-react";
+import { Server, Workflow } from "lucide-react";
 import { startTransition, type ReactNode } from "react";
 import { useLingui } from "@lingui/react/macro";
 import { useCurrentProjectId } from "@/renderer/hooks/uiSelectors";
@@ -27,7 +27,9 @@ export function useSidebarShortcuts(): SidebarShortcutEntry[] {
   const sidebarShortcutOrder = useSharedSettings((s) => s.sidebarShortcutOrder);
   const appView = useAppStore((s) => s.view);
   const openGitHubActions = useAppStore((s) => s.openGitHubActions);
-  const openSchedules = useAppStore((s) => s.openSchedules);
+  const settingsOpen = usePanelStore((s) => s.settingsOpen);
+  const settingsSection = usePanelStore((s) => s.settingsSection);
+  const openSettingsSection = usePanelStore((s) => s.openSettingsSection);
   const githubActionsOpen = usePanelStore((s) => s.githubActionsContext !== null);
 
   const sidebarShortcutsById = new Map<
@@ -47,9 +49,9 @@ export function useSidebarShortcuts(): SidebarShortcutEntry[] {
       "schedules",
       {
         id: "schedules",
-        icon: <CalendarClock className="size-4" />,
-        label: t`Schedules`,
-        onPress: () => startTransition(() => openSchedules()),
+        icon: <Server className="size-4" />,
+        label: t`Remote Environments`,
+        onPress: () => startTransition(() => openSettingsSection("remoteServers")),
       },
     ],
   ]);
@@ -62,6 +64,11 @@ export function useSidebarShortcuts(): SidebarShortcutEntry[] {
     )
     .map((shortcut) => ({
       ...shortcut,
-      isActive: shortcut.id === "githubActions" ? githubActionsOpen : appView.kind === shortcut.id,
+      isActive:
+        shortcut.id === "githubActions"
+          ? githubActionsOpen
+          : shortcut.id === "schedules"
+            ? settingsOpen && settingsSection === "remoteServers"
+            : appView.kind === shortcut.id,
     }));
 }

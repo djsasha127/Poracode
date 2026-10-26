@@ -282,6 +282,11 @@ msgstr "{1} adımın {0} tanesi"
 msgid "{0} of {1} tokens priced"
 msgstr "{1} tokenin {0} kadarı fiyatlandırıldı"
 
+#. placeholder {0}: props.descriptor.providerName
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "{0} profile saved."
+msgstr "{0} profili kaydedildi."
+
 #. placeholder {0}: cell.count
 #: src/renderer/views/ProfileOverlay/parts/ActivityHeatmap.tsx
 msgid "{0} prompt - {when}"
@@ -309,6 +314,12 @@ msgstr "{0} çalıştırma"
 #: src/renderer/views/ProfileOverlay/parts/PluginUsage.tsx
 msgid "{0} runs"
 msgstr "{0} çalıştırma"
+
+#. placeholder {0}: props.descriptor.providerName
+#. placeholder {1}: props.descriptor.envVar
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "{0} runs this profile with {1} set to the directory below. Use Login above to sign this profile in to its own account."
+msgstr "{0}, bu profili {1} aşağıdaki dizine ayarlanmış olarak çalıştırır. Profili kendi hesabında oturum açtırmak için yukarıdaki Giriş seçeneğini kullanın."
 
 #. placeholder {0}: threads.length
 #: src/mobile/views/ThreadsView.tsx
@@ -1359,6 +1370,11 @@ msgstr "Antigravity"
 msgid "Antigravity ACP"
 msgstr "Antigravity ACP"
 
+#. placeholder {0}: route.label
+#: src/renderer/actions/threadLaunchActions.ts
+msgid "Antigravity quota is exhausted. Starting with {0}."
+msgstr "Antigravity kotası tükendi. {0} ile başlatılıyor."
+
 #: src/renderer/views/SettingsOverlay/parts/CrossagentRoutingSection.tsx
 msgid "Anything currently unavailable — a provider, model, reasoning level, or Fast mode — is skipped automatically. Unchecked providers and models are skipped until re-checked."
 msgstr "Şu anda kullanılamayan her şey — bir sağlayıcı, model, akıl yürütme düzeyi veya Fast modu — otomatik olarak atlanır. İşaretlenmemiş sağlayıcılar ve modeller yeniden işaretlenene kadar atlanır."
@@ -2152,10 +2168,12 @@ msgstr "Dallar değiştirilemiyor; önce değişikliklerinizi commit edin veya s
 msgid "Category"
 msgstr "Kategori"
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Change home"
 msgstr "Dizini değiştir"
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Change profile home?"
 msgstr "Profil dizini değiştirilsin mi?"
@@ -5781,6 +5799,7 @@ msgstr "Geçmiş"
 msgid "Home"
 msgstr "Ana sayfa"
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Home directory"
 msgstr "Ana dizin"
@@ -7318,6 +7337,7 @@ msgstr "my-mcp-server"
 #: src/renderer/components/workspace/WorkspaceNameDialog.tsx
 #: src/renderer/views/ProfileOverlay/parts/EditProfileDialog.tsx
 #: src/renderer/views/SettingsOverlay/parts/ClaudeProfileSettings.tsx
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CursorProfileIdentity.tsx
 #: src/renderer/views/SettingsOverlay/parts/RemoteServersSettings.tsx
@@ -7467,6 +7487,10 @@ msgstr "yeni model"
 #: src/renderer/views/SettingsOverlay/parts/RemoteAccessSettings.tsx
 msgid "New phones, tablets, and browsers appear here after pairing."
 msgstr "Yeni telefonlar, tabletler ve tarayıcılar eşleştirmeden sonra burada görünür."
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "New profile home directory"
+msgstr "Yeni profil ana dizini"
 
 #: src/renderer/views/SettingsOverlay/parts/AgentProfileList.tsx
 msgid "New profile name"
@@ -9195,9 +9219,18 @@ msgstr "Profil"
 msgid "Profile {displayName} added."
 msgstr "{displayName} profili eklendi."
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Profile home"
 msgstr "Profil dizini"
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Profile home directory"
+msgstr "Profil ana dizini"
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Profile name"
+msgstr "Profil adı"
 
 #: src/renderer/views/SettingsOverlay/parts/AgentProfileList.tsx
 msgid "Profile removed, but statuses could not be refreshed."
@@ -9783,8 +9816,10 @@ msgstr "Uzaktan erişim eşleştirme QR kodu"
 msgid "Remote access port {occupiedPort} is already in use. Stop the other server, then retry."
 msgstr "Uzaktan erişim bağlantı noktası {occupiedPort} zaten kullanılıyor. Diğer sunucuyu durdurup yeniden deneyin."
 
+#: src/renderer/views/MainView/parts/Sidebar/parts/sidebarShortcuts.tsx
 #: src/renderer/views/SettingsOverlay/parts/RemoteServersSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/SettingsSidebar.tsx
+#: src/renderer/views/SettingsOverlay/parts/SidebarShortcutsSelector.tsx
 msgid "Remote Environments"
 msgstr "Uzak Ortamlar"
 
@@ -9970,6 +10005,10 @@ msgstr "Çalışma ağacı kaldırılsın mı?"
 #: src/renderer/views/SettingsOverlay/parts/CursorProfileSettings.tsx
 msgid "Removing {profileName} deletes its saved API key. Threads that use this profile will no longer find their agent."
 msgstr "{profileName} kaldırıldığında kayıtlı API anahtarı da silinir. Bu profili kullanan konular artık aracılarını bulamaz."
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Removing {profileName} drops it from Poracode. Its home directory and credentials stay on disk."
+msgstr "{profileName} kaldırıldığında Poracode listesinden çıkar. Ana dizini ve kimlik bilgileri diskte kalır."
 
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Removing {profileName} drops it from Poracode. Its home directory and the Codex credentials inside it stay on disk."
@@ -10424,6 +10463,15 @@ msgstr "İkinci bir Codex hesabını kendi CODEX_HOME dizininden çalıştırın
 msgid "Run actions"
 msgstr "Çalıştırma eylemleri"
 
+#. placeholder {0}: descriptor.providerName
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Run additional {0} accounts from isolated home directories. Each profile signs in separately."
+msgstr "Yalıtılmış ana dizinlerden ek {0} hesapları çalıştırın. Her profil ayrı oturum açar."
+
+#: src/renderer/views/SettingsOverlay/parts/AntigravityProfileSettings.tsx
+msgid "Run additional Antigravity CLI accounts from isolated homes. Each profile signs in separately and keeps its own conversations and quota. Chat remains on the main Antigravity account."
+msgstr "Yalıtılmış ana dizinlerden ek Antigravity CLI hesapları çalıştırın. Her profil ayrı oturum açar ve kendi konuşmalarını ve kotasını korur. Chat ana Antigravity hesabında kalır."
+
 #: src/renderer/views/SchedulesView/ScheduleEditor.tsx
 msgid "Run at"
 msgstr "Çalıştırma zamanı"
@@ -10533,6 +10581,7 @@ msgstr "Doygunluk ve parlaklık"
 #: src/renderer/views/FileEditorOverlay/parts/FileEditorPane/parts/EditorToolbar.tsx
 #: src/renderer/views/ProfileOverlay/parts/EditProfileDialog.tsx
 #: src/renderer/views/SettingsOverlay/parts/ClaudeProfileSettings.tsx
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/ProviderMcpServersSection.tsx
 #: src/renderer/views/SettingsOverlay/parts/RemoteServersSettings.tsx
@@ -10642,8 +10691,6 @@ msgid "Scheduled tasks on this desktop"
 msgstr "Bu masaüstündeki zamanlanmış görevler"
 
 #: src/mobile/settingsSections.ts
-#: src/renderer/views/MainView/parts/Sidebar/parts/sidebarShortcuts.tsx
-#: src/renderer/views/SettingsOverlay/parts/SidebarShortcutsSelector.tsx
 msgid "Schedules"
 msgstr "Zamanlamalar"
 
@@ -12260,6 +12307,10 @@ msgstr "Uzak Poracode sunucusu eşleştirme kimlik bilgisi döndürmedi."
 msgid "The remote server returned no pairing credential."
 msgstr "Uzak sunucu eşleştirme kimlik bilgisi döndürmedi."
 
+#: src/renderer/state/remoteServersStore.ts
+msgid "The remote session has expired."
+msgstr "Uzak oturumun süresi doldu."
+
 #: src/renderer/i18n/sharedMessages.ts
 msgid "The replacement message could not be sent."
 msgstr "Yerine geçecek mesaj gönderilemedi."
@@ -12327,6 +12378,10 @@ msgstr "Beceri kaynağıyla eşitlenmiş olarak kalır ve kaynak taşınırsa ç
 #: src/renderer/components/skills/SkillMarketplaceModal.tsx
 msgid "The skills marketplace couldn't be loaded."
 msgstr "Beceri marketplace'i yüklenemedi."
+
+#: src/renderer/state/remoteServersStore.ts
+msgid "The SSH host returned a different remote server."
+msgstr "SSH ana bilgisayarı farklı bir uzak sunucu döndürdü."
 
 #: src/renderer/i18n/sharedMessages.ts
 msgid "The SSH tunnel reached an incompatible Poracode server."
@@ -12528,6 +12583,7 @@ msgstr "Bu eklentinin Poracode ayarları geçersiz olduğu için yok sayıldı."
 msgid "This plugin's skills could not be read."
 msgstr "Bu eklentinin becerileri okunamadı."
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "This profile already has threads. Their sessions stay in the current home directory, so they can't be resumed after you change it."
 msgstr "Bu profilin zaten konuları var. Oturumları geçerli ana dizinde kalır, bu yüzden dizini değiştirdikten sonra sürdürülemezler."

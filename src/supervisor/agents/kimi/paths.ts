@@ -10,11 +10,11 @@ import { join } from "node:path";
  * that from becoming an import cycle.
  */
 
-export function nativeKimiHomePath(): string {
-  const kimiHome = process.env["KIMI_CODE_HOME"];
+export function nativeKimiHomePath(env?: Record<string, string>): string {
+  const kimiHome = env?.KIMI_CODE_HOME ?? process.env["KIMI_CODE_HOME"];
   return kimiHome && kimiHome.trim().length > 0 ? kimiHome : join(homedir(), ".kimi-code");
 }
 
-export function nativeKimiOAuthCredentialPath(): string {
-  return join(nativeKimiHomePath(), "credentials", "kimi-code.json");
+export function nativeKimiOAuthCredentialPath(env?: Record<string, string>): string {
+  return join(nativeKimiHomePath(env), "credentials", "kimi-code.json");
 }

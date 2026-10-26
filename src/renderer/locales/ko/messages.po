@@ -282,6 +282,11 @@ msgstr "{1}단계 중 {0}"
 msgid "{0} of {1} tokens priced"
 msgstr "{1}개 토큰 중 {0}개 가격 산정"
 
+#. placeholder {0}: props.descriptor.providerName
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "{0} profile saved."
+msgstr "{0} 프로필을 저장했습니다."
+
 #. placeholder {0}: cell.count
 #: src/renderer/views/ProfileOverlay/parts/ActivityHeatmap.tsx
 msgid "{0} prompt - {when}"
@@ -309,6 +314,12 @@ msgstr "{0}회 실행"
 #: src/renderer/views/ProfileOverlay/parts/PluginUsage.tsx
 msgid "{0} runs"
 msgstr "{0}회 실행"
+
+#. placeholder {0}: props.descriptor.providerName
+#. placeholder {1}: props.descriptor.envVar
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "{0} runs this profile with {1} set to the directory below. Use Login above to sign this profile in to its own account."
+msgstr "{0}은(는) {1}을(를) 아래 디렉터리로 설정하여 이 프로필을 실행합니다. 위의 로그인을 사용해 이 프로필의 별도 계정에 로그인하세요."
 
 #. placeholder {0}: threads.length
 #: src/mobile/views/ThreadsView.tsx
@@ -1359,6 +1370,11 @@ msgstr "Antigravity"
 msgid "Antigravity ACP"
 msgstr "Antigravity ACP"
 
+#. placeholder {0}: route.label
+#: src/renderer/actions/threadLaunchActions.ts
+msgid "Antigravity quota is exhausted. Starting with {0}."
+msgstr "Antigravity 할당량이 소진되었습니다. {0}(으)로 시작합니다."
+
 #: src/renderer/views/SettingsOverlay/parts/CrossagentRoutingSection.tsx
 msgid "Anything currently unavailable — a provider, model, reasoning level, or Fast mode — is skipped automatically. Unchecked providers and models are skipped until re-checked."
 msgstr "현재 사용할 수 없는 항목 — 제공자, 모델, 추론 수준 또는 Fast 모드 — 은 자동으로 건너뜁니다. 선택 해제된 제공자와 모델은 다시 선택할 때까지 건너뜁니다."
@@ -2152,10 +2168,12 @@ msgstr "브랜치를 전환할 수 없습니다. 먼저 변경 사항을 커밋�
 msgid "Category"
 msgstr "카테고리"
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Change home"
 msgstr "홈 변경"
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Change profile home?"
 msgstr "프로필 홈을 변경할까요?"
@@ -5781,6 +5799,7 @@ msgstr "기록"
 msgid "Home"
 msgstr "홈"
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Home directory"
 msgstr "홈 디렉터리"
@@ -7318,6 +7337,7 @@ msgstr "my-mcp-server"
 #: src/renderer/components/workspace/WorkspaceNameDialog.tsx
 #: src/renderer/views/ProfileOverlay/parts/EditProfileDialog.tsx
 #: src/renderer/views/SettingsOverlay/parts/ClaudeProfileSettings.tsx
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CursorProfileIdentity.tsx
 #: src/renderer/views/SettingsOverlay/parts/RemoteServersSettings.tsx
@@ -7467,6 +7487,10 @@ msgstr "새 모델"
 #: src/renderer/views/SettingsOverlay/parts/RemoteAccessSettings.tsx
 msgid "New phones, tablets, and browsers appear here after pairing."
 msgstr "새 휴대폰, 태블릿, 브라우저는 페어링 후 여기에 표시됩니다."
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "New profile home directory"
+msgstr "새 프로필 홈 디렉터리"
 
 #: src/renderer/views/SettingsOverlay/parts/AgentProfileList.tsx
 msgid "New profile name"
@@ -9195,9 +9219,18 @@ msgstr "프로필"
 msgid "Profile {displayName} added."
 msgstr "프로필 {displayName}을(를) 추가했습니다."
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Profile home"
 msgstr "프로필 홈"
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Profile home directory"
+msgstr "프로필 홈 디렉터리"
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Profile name"
+msgstr "프로필 이름"
 
 #: src/renderer/views/SettingsOverlay/parts/AgentProfileList.tsx
 msgid "Profile removed, but statuses could not be refreshed."
@@ -9783,8 +9816,10 @@ msgstr "원격 액세스 페어링 QR 코드"
 msgid "Remote access port {occupiedPort} is already in use. Stop the other server, then retry."
 msgstr "원격 액세스 포트 {occupiedPort}이(가) 이미 사용 중입니다. 다른 서버를 중지한 후 다시 시도하세요."
 
+#: src/renderer/views/MainView/parts/Sidebar/parts/sidebarShortcuts.tsx
 #: src/renderer/views/SettingsOverlay/parts/RemoteServersSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/SettingsSidebar.tsx
+#: src/renderer/views/SettingsOverlay/parts/SidebarShortcutsSelector.tsx
 msgid "Remote Environments"
 msgstr "원격 환경"
 
@@ -9970,6 +10005,10 @@ msgstr "작업 트리를 삭제하시겠습니까?"
 #: src/renderer/views/SettingsOverlay/parts/CursorProfileSettings.tsx
 msgid "Removing {profileName} deletes its saved API key. Threads that use this profile will no longer find their agent."
 msgstr "{profileName}을(를) 제거하면 저장된 API 키도 삭제됩니다. 이 프로필을 사용하는 스레드는 더 이상 에이전트를 찾을 수 없습니다."
+
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Removing {profileName} drops it from Poracode. Its home directory and credentials stay on disk."
+msgstr "{profileName}을(를) 제거하면 Poracode에서 삭제됩니다. 홈 디렉터리와 자격 증명은 디스크에 남습니다."
 
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "Removing {profileName} drops it from Poracode. Its home directory and the Codex credentials inside it stay on disk."
@@ -10424,6 +10463,15 @@ msgstr "별도의 CODEX_HOME에서 두 번째 Codex 계정을 실행합니다. �
 msgid "Run actions"
 msgstr "실행 작업"
 
+#. placeholder {0}: descriptor.providerName
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
+msgid "Run additional {0} accounts from isolated home directories. Each profile signs in separately."
+msgstr "격리된 홈 디렉터리에서 추가 {0} 계정을 실행합니다. 각 프로필은 별도로 로그인합니다."
+
+#: src/renderer/views/SettingsOverlay/parts/AntigravityProfileSettings.tsx
+msgid "Run additional Antigravity CLI accounts from isolated homes. Each profile signs in separately and keeps its own conversations and quota. Chat remains on the main Antigravity account."
+msgstr "격리된 홈에서 추가 Antigravity CLI 계정을 실행합니다. 각 프로필은 별도로 로그인하며 자체 대화와 할당량을 유지합니다. Chat은 기본 Antigravity 계정에 유지됩니다."
+
 #: src/renderer/views/SchedulesView/ScheduleEditor.tsx
 msgid "Run at"
 msgstr "실행 시각"
@@ -10533,6 +10581,7 @@ msgstr "채도와 밝기"
 #: src/renderer/views/FileEditorOverlay/parts/FileEditorPane/parts/EditorToolbar.tsx
 #: src/renderer/views/ProfileOverlay/parts/EditProfileDialog.tsx
 #: src/renderer/views/SettingsOverlay/parts/ClaudeProfileSettings.tsx
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/ProviderMcpServersSection.tsx
 #: src/renderer/views/SettingsOverlay/parts/RemoteServersSettings.tsx
@@ -10642,8 +10691,6 @@ msgid "Scheduled tasks on this desktop"
 msgstr "이 데스크톱의 예약 작업"
 
 #: src/mobile/settingsSections.ts
-#: src/renderer/views/MainView/parts/Sidebar/parts/sidebarShortcuts.tsx
-#: src/renderer/views/SettingsOverlay/parts/SidebarShortcutsSelector.tsx
 msgid "Schedules"
 msgstr "일정"
 
@@ -12260,6 +12307,10 @@ msgstr "원격 Poracode 서버가 페어링 자격 증명을 반환하지 않았
 msgid "The remote server returned no pairing credential."
 msgstr "원격 서버에서 페어링 자격 증명을 반환하지 않았습니다."
 
+#: src/renderer/state/remoteServersStore.ts
+msgid "The remote session has expired."
+msgstr "원격 세션이 만료되었습니다."
+
 #: src/renderer/i18n/sharedMessages.ts
 msgid "The replacement message could not be sent."
 msgstr "대체 메시지를 보낼 수 없습니다."
@@ -12327,6 +12378,10 @@ msgstr "스킬은 소스와 동기화된 상태를 유지하며 소스가 이동
 #: src/renderer/components/skills/SkillMarketplaceModal.tsx
 msgid "The skills marketplace couldn't be loaded."
 msgstr "스킬 마켓플레이스를 로드할 수 없습니다."
+
+#: src/renderer/state/remoteServersStore.ts
+msgid "The SSH host returned a different remote server."
+msgstr "SSH 호스트가 다른 원격 서버를 반환했습니다."
 
 #: src/renderer/i18n/sharedMessages.ts
 msgid "The SSH tunnel reached an incompatible Poracode server."
@@ -12528,6 +12583,7 @@ msgstr "이 플러그인의 Poracode 설정이 유효하지 않아 무시되었�
 msgid "This plugin's skills could not be read."
 msgstr "이 플러그인의 스킬을 읽을 수 없습니다."
 
+#: src/renderer/views/SettingsOverlay/parts/CliHomeProfileSettings.tsx
 #: src/renderer/views/SettingsOverlay/parts/CodexProfileSettings.tsx
 msgid "This profile already has threads. Their sessions stay in the current home directory, so they can't be resumed after you change it."
 msgstr "이 프로필에는 이미 스레드가 있습니다. 세션은 현재 홈 디렉터리에 남아 있으므로 변경한 후에는 재개할 수 없습니다."

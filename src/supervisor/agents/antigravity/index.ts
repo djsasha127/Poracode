@@ -1,9 +1,13 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { antigravityNativeMcpConfig } from "./nativeMcp";
-import type {
-  AgentCapability,
-  AgentInstanceConfig,
-  PromptSegment,
-  ProjectLocation,
+import {
+  antigravityProfileKind,
+  parseAntigravityProfileInstanceConfig,
+  type AgentCapability,
+  type AgentInstanceConfig,
+  type PromptSegment,
+  type ProjectLocation,
 } from "@/shared/contracts";
 import { ANTIGRAVITY_ACP_REGISTRY_ID } from "@/shared/agents/antigravity";
 import { compareVersions } from "@/shared/changelog";
@@ -13,10 +17,13 @@ import { EXTRACTION_PROMPT } from "@/supervisor/contextExtractor";
 import {
   createKnownSessionRef,
   detectAgentInstall,
+  detectProbeLocation,
   watchSessionPaths,
   type AgentAdapter,
+  type AuthProbe,
   inheritBaseSpawnEnv,
 } from "../base";
+import { createProfileHomeEnvironment } from "../profileHome";
 import { probeAntigravityAccount } from "./antigravityAccountProbe";
 import { buildAntigravityArgs, buildAntigravityModelArgs } from "./argv";
 import {
@@ -47,8 +54,72 @@ export function shouldUseAntigravityPrintPty(version: string | undefined): boole
   return !version || compareVersions(version, "1.1.1") < 0;
 }
 
-export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): AgentAdapter {
-  const acpRuntime = createAntigravityAcpRuntime(acpInstance);
+interface AntigravityAdapterOptions {
+  kind?: string;
+  label?: string;
+  homeDir?: string;
+}
+
+const BLANKED_ANTIGRAVITY_HOST_CREDENTIALS: Readonly<Record<string, string>> = {
+  GEMINI_API_KEY: "",
+  GOOGLE_API_KEY: "",
+  GOOGLE_APPLICATION_CREDENTIALS: "",
+  AGY_ADC_AUTH: "",
+};
+
+export function createAntigravityProfileAdapter(instance: AgentInstanceConfig): AgentAdapter {
+  const config = parseAntigravityProfileInstanceConfig(instance.config);
+  const label = instance.displayName ?? instance.id;
+  return createAntigravityAdapter(undefined, {
+    kind: antigravityProfileKind(instance.id),
+    label: `Antigravity ${label}`,
+    homeDir: config.homeDir,
+  });
+}
+
+export function createAntigravityAdapter(
+  acpInstance?: AgentInstanceConfig,
+  options: AntigravityAdapterOptions = {},
+): AgentAdapter {
+  const kind = options.kind ?? "antigravity";
+  const label = options.label ?? "Antigravity";
+  const profileHome = options.homeDir
+    ? createProfileHomeEnvironment({
+        homeDir: options.homeDir,
+        envVar: "HOME",
+        blankedHostCredentials: BLANKED_ANTIGRAVITY_HOST_CREDENTIALS,
+      })
+    : undefined;
+  const resolvedProfileHome = (location: ProjectLocation): string | undefined =>
+    profileHome?.homeFor(location);
+  const profileAuthProbe: AuthProbe = async (ctx) => {
+    if (!profileHome) return "unknown";
+    const tokenPath = join(
+      profileHome.diskHomeFor(ctx.location),
+      ".gemini",
+      "antigravity-cli",
+      "antigravity-oauth-token",
+    );
+    return existsSync(tokenPath) ? "authenticated" : "unknown";
+  };
+  const buildDetectionSpec = (location?: ProjectLocation) => {
+    const spec = createAntigravityDetectionSpec((probe) => {
+      supportsSeparateModelEffort = probe.dialect.separateModelEffort;
+      defaultModel = probe.capabilities?.models[0]?.id ?? ANTIGRAVITY_DEFAULT_MODEL_ID;
+    });
+    if (!profileHome || !location) return { ...spec, kind, label };
+    return {
+      ...spec,
+      kind,
+      label,
+      baseSpawnEnv: { ...spec.baseSpawnEnv, ...profileHome.envFor(location) },
+      authProbes: [profileAuthProbe],
+    };
+  };
+  // Profiles intentionally stay on the CLI runtime. Google's ACP server uses
+  // a machine-wide credential store, so attaching it here would collapse every
+  // profile back onto the main account.
+  const acpRuntime = profileHome ? undefined : createAntigravityAcpRuntime(acpInstance);
   const createAcpSession = acpRuntime?.createStructuredSession;
   const buildAcpAuthCommand = acpRuntime?.buildAcpAuthCommand;
   let terminalCapabilities: AgentCapability = defaultAntigravityCapabilities;
@@ -72,24 +143,30 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
   // probe cannot claim a Chat runtime that may not be installed.
   let acpRuntimeInstalled = false;
   let defaultModel = ANTIGRAVITY_DEFAULT_MODEL_ID;
-  const detectionSpec = createAntigravityDetectionSpec((probe) => {
-    supportsSeparateModelEffort = probe.dialect.separateModelEffort;
-    defaultModel = probe.capabilities?.models[0]?.id ?? ANTIGRAVITY_DEFAULT_MODEL_ID;
-  });
+  const detectionSpec = buildDetectionSpec();
 
   return {
-    nativeMcpConfig: (ctx) => (ctx.envKind === "wsl" ? undefined : antigravityNativeMcpConfig()),
-    kind: detectionSpec.kind,
-    label: detectionSpec.label,
+    nativeMcpConfig: (ctx) => {
+      if (ctx.envKind === "wsl") return undefined;
+      if (!profileHome) return antigravityNativeMcpConfig();
+      const location: ProjectLocation =
+        ctx.envKind === "windows" ? { kind: "windows", path: "" } : { kind: "posix", path: "" };
+      return antigravityNativeMcpConfig(
+        join(profileHome.homeFor(location), ".gemini", "config", "mcp_config.json"),
+      );
+    },
+    kind,
+    label,
     binary: detectionSpec.binary,
-    firstClassAcpRegistryId: ANTIGRAVITY_ACP_REGISTRY_ID,
+    ...(profileHome ? {} : { firstClassAcpRegistryId: ANTIGRAVITY_ACP_REGISTRY_ID }),
     skillSupport: {
       roots: [
         {
           id: "antigravity",
-          label: detectionSpec.label,
+          label,
           globalPath: ".gemini/config/skills",
           projectPath: ".agent/skills",
+          ...(options.homeDir ? { globalBasePath: options.homeDir } : {}),
         },
         {
           // Antigravity loads `{workspace}/.agents/skills/{name}/SKILL.md`
@@ -102,8 +179,9 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
       projectionRoots: [
         {
           id: "antigravity",
-          label: detectionSpec.label,
+          label,
           globalPath: ".gemini/config/skills",
+          ...(options.homeDir ? { globalBasePath: options.homeDir } : {}),
         },
       ],
       invocation: "prompt",
@@ -112,7 +190,7 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
         project: ["agents", "antigravity"],
       },
     },
-    ...(detectionSpec.update ? { update: detectionSpec.update } : {}),
+    ...(!profileHome && detectionSpec.update ? { update: detectionSpec.update } : {}),
     get capabilities() {
       return capabilities;
     },
@@ -126,13 +204,17 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
     ...inheritBaseSpawnEnv(detectionSpec),
 
     async detectInstall(ctx) {
+      const location = detectProbeLocation(ctx);
+      const activeDetectionSpec = profileHome ? buildDetectionSpec(location) : detectionSpec;
       const [status, acpStatus] = await Promise.all([
-        detectAgentInstall(ctx, detectionSpec),
+        detectAgentInstall(ctx, activeDetectionSpec),
         acpRuntime?.detectInstall(ctx),
       ]);
       terminalCapabilities = status.capabilities;
       cliRuntimeInstalled = status.installed;
-      const merged = applyAntigravityAcpStatus(status, acpStatus);
+      const merged = profileHome
+        ? { ...status, kind, label }
+        : applyAntigravityAcpStatus(status, acpStatus);
       acpRuntimeInstalled = merged.runtimeVariants?.acp?.installed === true;
       capabilities = merged.capabilities;
       supportsSeparateModelEffort ||= Boolean(
@@ -143,6 +225,7 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
     },
 
     async resolveAccount({ status, wslDistros }) {
+      if (profileHome) return undefined;
       // Spawning `agy` is only safe once the user is signed in (the config-dir
       // probe's soft signal) — a never-authenticated spawn would drop into the
       // interactive OAuth flow. Otherwise restrict to reusing a running LS.
@@ -165,10 +248,14 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
         preSpawnConversationIds = new Set();
         preSpawnLastConversationForCwd = undefined;
       } else {
-        preSpawnConversationIds = readAntigravityConversationIds(location);
+        preSpawnConversationIds = readAntigravityConversationIds(
+          location,
+          resolvedProfileHome(location),
+        );
         preSpawnLastConversationForCwd = readAntigravityLastConversationForCwd(
           location,
           locationCwd(location),
+          resolvedProfileHome(location),
         );
       }
       const args = buildAntigravityArgs(
@@ -181,10 +268,11 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
       // Keep file tools in the selected project. Home remains projectless so it
       // can continue to serve as an OS-level session spanning user folders.
       if (!isHomeScopeLocation(location)) args.unshift("--new-project");
-      return { binary: "agy", args };
+      const result = { binary: "agy", args };
+      return profileHome ? profileHome.withEnv(result, location) : result;
     },
 
-    buildResumeArgv(_location, config, prompt, sessionRef) {
+    buildResumeArgv(location, config, prompt, sessionRef) {
       const args = buildAntigravityArgs(
         config,
         prompt,
@@ -192,7 +280,8 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
         supportsSeparateModelEffort,
         defaultModel,
       );
-      return { binary: "agy", args };
+      const result = { binary: "agy", args };
+      return profileHome ? profileHome.withEnv(result, location) : result;
     },
 
     createInitialSessionRef() {
@@ -206,7 +295,11 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
       // the bridge, so fall back to the cached "last" id plus a time-windowed
       // newest-by-mtime scan (anchored to the launch time) for the live case.
       if (location.kind === "wsl") {
-        const latest = await readAntigravityLastConversationForCwdAsync(location, cwd);
+        const latest = await readAntigravityLastConversationForCwdAsync(
+          location,
+          cwd,
+          resolvedProfileHome(location),
+        );
         if (
           latest &&
           latest !== preSpawnLastConversationForCwd &&
@@ -218,6 +311,7 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
           location,
           preSpawnConversationIds,
           preSpawnStartedAt - 1000,
+          resolvedProfileHome(location),
         );
         return newest ? createKnownSessionRef(newest) : undefined;
       }
@@ -230,12 +324,17 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
         location,
         preSpawnConversationIds,
         cwd,
+        resolvedProfileHome(location),
       );
       if (matched) return createKnownSessionRef(matched);
       // Fallback: the workspace → last-conversation cache. `agy` only writes
       // this on exit, so it covers re-discovery of an already-closed session
       // (e.g. after an app restart) rather than the live case above.
-      const latest = readAntigravityLastConversationForCwd(location, cwd);
+      const latest = readAntigravityLastConversationForCwd(
+        location,
+        cwd,
+        resolvedProfileHome(location),
+      );
       if (
         latest &&
         latest !== preSpawnLastConversationForCwd &&
@@ -247,7 +346,7 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
     },
 
     watchSessionRef(location, onChanged) {
-      const paths = resolveAntigravityWatchPaths(location);
+      const paths = resolveAntigravityWatchPaths(location, resolvedProfileHome(location));
       if (paths.length === 0) return undefined;
       return watchSessionPaths(
         location,
@@ -293,7 +392,7 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
       return defaultModel;
     },
 
-    buildOneShotCommand(model, effort, prompt) {
+    buildOneShotCommand(model, effort, prompt, location) {
       if (!prompt) return undefined;
       // `agy -p` persists a throwaway conversation AND rewrites
       // last_conversations.json[cwd] with its id. Running it in the project cwd
@@ -302,7 +401,7 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
       // (title gen, commit-msg, PR summary). `agy` has no flag to pre-assign a
       // conversation id, so isolate the cwd instead — the prompt is fully
       // self-contained, so the working directory is irrelevant to the output.
-      return {
+      const result = {
         command: "agy",
         args: [
           ...buildAntigravityModelArgs(model, effort, supportsSeparateModelEffort, defaultModel),
@@ -313,10 +412,11 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
         isolateCwd: true,
         ...(usePtyForPrint ? { pty: true } : {}),
       };
+      return location && profileHome ? profileHome.withEnv(result, location) : result;
     },
 
-    buildContextExtractionCommand(sessionRef, _location, model) {
-      return {
+    buildContextExtractionCommand(sessionRef, location, model) {
+      const result = {
         command: "agy",
         args: [
           "--conversation",
@@ -327,13 +427,14 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
         ],
         stdin: "",
       };
+      return profileHome ? profileHome.withEnv(result, location) : result;
     },
 
     // Subagents stay on the agy one-shot lane so the terminal CLI remains the
     // execution source for child work. Unlike title/commit generation this does
     // NOT isolate the cwd — a child runs in the parent's project directory.
     buildSubagentOneShotCommand({ model, effort, prompt, location }) {
-      return {
+      const result = {
         command: "agy",
         args: [
           ...(!isHomeScopeLocation(location) ? ["--new-project"] : []),
@@ -345,6 +446,7 @@ export function createAntigravityAdapter(acpInstance?: AgentInstanceConfig): Age
         stdin: "",
         ...(usePtyForPrint ? { pty: true } : {}),
       };
+      return profileHome ? profileHome.withEnv(result, location) : result;
     },
 
     ...(createAcpSession

@@ -1,5 +1,12 @@
 import { kimiNativeMcpConfig } from "./nativeMcp";
-import type { PromptSegment } from "@/shared/contracts";
+import { join } from "node:path";
+import {
+  kimiProfileKind,
+  parseKimiProfileInstanceConfig,
+  type AgentInstanceConfig,
+  type ProjectLocation,
+  type PromptSegment,
+} from "@/shared/contracts";
 import { msg } from "@/shared/messages";
 import { inlinePromptSegmentText } from "@/shared/promptContent";
 import { createAcpStructuredSession } from "../acp";
@@ -11,6 +18,7 @@ import {
   type AgentEnvContext,
   type CreateStructuredSessionInput,
 } from "../base";
+import { createProfileHomeEnvironment } from "../profileHome";
 import { resolveAgentBinaryPath } from "../binaryResolver";
 import { createKimiAcpSessionUpdateTransform } from "./acpTransform";
 import { buildKimiAcpArgs, buildKimiArgs, buildKimiContinueArgs } from "./argv";
@@ -21,6 +29,7 @@ import { ensureKimiWorkspaceTrust } from "./kimiTrust";
 import {
   makeKimiDiscoverSessionRef,
   makeKimiWatchSessionRef,
+  resolveKimiSessionDir,
   snapshotKimiPreSpawnSessions,
 } from "./sessionFiles";
 import {
@@ -48,21 +57,60 @@ export function resolveKimiEmptyResponseError(input: {
   return new Error(msg(credentialRenameBlocked ? "kimi.credentialsLocked" : "kimi.emptyResponse"));
 }
 
-export function createKimiAdapter(): AgentAdapter {
+interface KimiAdapterOptions {
+  kind?: string;
+  label?: string;
+  homeDir?: string;
+}
+
+const BLANKED_KIMI_HOST_CREDENTIALS: Readonly<Record<string, string>> = {
+  KIMI_API_KEY: "",
+  MOONSHOT_API_KEY: "",
+};
+
+export function createKimiProfileAdapter(instance: AgentInstanceConfig): AgentAdapter {
+  const config = parseKimiProfileInstanceConfig(instance.config);
+  const label = instance.displayName ?? instance.id;
+  return createKimiAdapter({
+    kind: kimiProfileKind(instance.id),
+    label: `Kimi ${label}`,
+    homeDir: config.homeDir,
+  });
+}
+
+export function createKimiAdapter(options: KimiAdapterOptions = {}): AgentAdapter {
   let capabilities = kimiDefaultCapabilities;
+  const kind = options.kind ?? kimiDetectionSpec.kind;
+  const label = options.label ?? kimiDetectionSpec.label;
+  const profileHome = options.homeDir
+    ? createProfileHomeEnvironment({
+        homeDir: options.homeDir,
+        envVar: "KIMI_CODE_HOME",
+        blankedHostCredentials: BLANKED_KIMI_HOST_CREDENTIALS,
+      })
+    : undefined;
+  const resolvedProfileHome = (location: ProjectLocation): string | undefined =>
+    profileHome?.homeFor(location);
 
   return {
-    nativeMcpConfig: (ctx) => (ctx.envKind === "wsl" ? undefined : kimiNativeMcpConfig()),
-    kind: kimiDetectionSpec.kind,
-    label: kimiDetectionSpec.label,
+    nativeMcpConfig: (ctx) => {
+      if (ctx.envKind === "wsl") return undefined;
+      if (!profileHome) return kimiNativeMcpConfig();
+      const location: ProjectLocation =
+        ctx.envKind === "windows" ? { kind: "windows", path: "" } : { kind: "posix", path: "" };
+      return kimiNativeMcpConfig(join(profileHome.homeFor(location), "mcp.json"));
+    },
+    kind,
+    label,
     binary: kimiDetectionSpec.binary,
     skillSupport: {
       roots: [
         {
           id: "kimi",
-          label: kimiDetectionSpec.label,
+          label,
           globalPath: ".kimi-code/skills",
           projectPath: ".kimi-code/skills",
+          ...(options.homeDir ? { globalBasePath: options.homeDir } : {}),
           globalOverride: { env: "KIMI_CODE_HOME", path: "skills" },
         },
         {
@@ -91,9 +139,14 @@ export function createKimiAdapter(): AgentAdapter {
     spawnEnv: { wsl: { BROWSER: "/bin/true" } },
 
     async detectInstall(ctx) {
-      const status = await detectAgentInstall(ctx, kimiDetectionSpec);
+      const location = detectProbeLocation(ctx);
+      const profileEnv = profileHome?.envFor(location);
+      const spec = profileEnv
+        ? { ...kimiDetectionSpec, kind, label, baseSpawnEnv: profileEnv }
+        : kimiDetectionSpec;
+      const status = await detectAgentInstall(ctx, spec);
       capabilities = status.capabilities;
-      return status;
+      return { ...status, kind, label };
     },
 
     // No `buildUpdateCommand` override: `kimi upgrade` is an interactive TUI, so
@@ -106,9 +159,10 @@ export function createKimiAdapter(): AgentAdapter {
       // one, so snapshot the existing session dirs here and let the runtime
       // discover the real id afterward (discoverSessionRef below). Returning no
       // sessionRef is what enables that discovery path.
-      snapshotKimiPreSpawnSessions(location);
+      snapshotKimiPreSpawnSessions(location, resolvedProfileHome(location));
       const args = buildKimiArgs(config, prompt);
-      return { binary: "kimi", args };
+      const result = { binary: "kimi", args };
+      return profileHome ? profileHome.withEnv(result, location) : result;
     },
 
     buildResumeArgv(_location, config, prompt, sessionRef) {
@@ -117,7 +171,8 @@ export function createKimiAdapter(): AgentAdapter {
       // most recent session in the cwd.
       const id = sessionRef?.providerSessionId;
       const args = id ? buildKimiArgs(config, prompt, id) : buildKimiContinueArgs(config);
-      return { binary: "kimi", args };
+      const result = { binary: "kimi", args };
+      return profileHome ? profileHome.withEnv(result, _location) : result;
     },
 
     // The only async hook that runs ahead of every PTY spawn — used to
@@ -125,27 +180,38 @@ export function createKimiAdapter(): AgentAdapter {
     // "Trust this folder?" dialog never blocks a launch (the args pass
     // through untouched).
     async rewriteLaunchArgsForConfig(args, _config, projectLocation) {
-      await ensureKimiWorkspaceTrust(projectLocation);
+      await ensureKimiWorkspaceTrust(
+        projectLocation,
+        undefined,
+        profileHome?.envFor(projectLocation),
+      );
       return args;
     },
 
     async createStructuredSession(input: CreateStructuredSessionInput) {
-      await ensureKimiWorkspaceTrust(input.projectLocation);
+      const profileEnv = profileHome?.envFor(input.projectLocation);
+      await ensureKimiWorkspaceTrust(input.projectLocation, undefined, profileEnv);
       const acpArgs = buildKimiAcpArgs(input.config);
       const command = buildKimiCommand(
         input.projectLocation,
         [...acpArgs, "acp"],
         resolveAgentBinaryPath(input.projectLocation, "kimi"),
+        profileEnv,
       );
       let session: ReturnType<typeof createAcpStructuredSession>;
       const subagents = createAcpSubagentCoordinator();
       const backgroundBridge = createKimiBackgroundBridge(
         input.projectLocation,
         (notification) => session?.ingestExternalSessionUpdate(notification),
-        { subagents },
+        {
+          subagents,
+          resolveSessionDir: (location, sessionId) =>
+            resolveKimiSessionDir(location, sessionId, resolvedProfileHome(location)),
+        },
       );
       session = createAcpStructuredSession(command, {
         ...input,
+        ...(profileEnv ? { env: { ...(input.env ?? {}), ...profileEnv } } : {}),
         // Kimi's ACP server rejects the protocol's standard stdio MCP shape
         // during session/new ("ACP stdio MCP server <name> does not declare a
         // runtime identity", surfaced only as -32603 Internal error), and the
@@ -192,7 +258,12 @@ export function createKimiAdapter(): AgentAdapter {
     // `kimi acp --login` flow), while `logout` drives the real RPC logout.
     async buildAcpAuthCommand(ctx?: AgentEnvContext) {
       const location = detectProbeLocation(ctx);
-      return buildKimiCommand(location, ["acp"], resolveAgentBinaryPath(location, "kimi"));
+      return buildKimiCommand(
+        location,
+        ["acp"],
+        resolveAgentBinaryPath(location, "kimi"),
+        profileHome?.envFor(location),
+      );
     },
 
     // Logout is ACP-RPC-first (v2 advertises `agentCapabilities.auth.logout`)
@@ -201,7 +272,8 @@ export function createKimiAdapter(): AgentAdapter {
     // the adapter for its logout spec never signs anyone out.
     preferAcpLogoutRpc: true,
     async buildAcpLogoutCommand(ctx?: AgentEnvContext) {
-      return buildKimiLogoutCommand(ctx);
+      const location = detectProbeLocation(ctx);
+      return buildKimiLogoutCommand(ctx, profileHome?.envFor(location));
     },
 
     createInitialSessionRef() {
@@ -211,8 +283,8 @@ export function createKimiAdapter(): AgentAdapter {
     // Kimi writes the session dir shortly after launch; poll a beat afterward
     // and rely on watchSessionRef to catch the dir's creation.
     initialSessionRefDiscoveryDelayMs: 1000,
-    discoverSessionRef: makeKimiDiscoverSessionRef(),
-    watchSessionRef: makeKimiWatchSessionRef(),
+    discoverSessionRef: makeKimiDiscoverSessionRef(resolvedProfileHome),
+    watchSessionRef: makeKimiWatchSessionRef(resolvedProfileHome),
 
     buildDirectInput(prompt) {
       // Kimi's paste-burst guard suppresses Enter for 120ms after rapidly
@@ -258,12 +330,17 @@ export function createKimiAdapter(): AgentAdapter {
     // path: `kimi -p <prompt> --output-format text`. The `-p` path is
     // non-interactive (no approval flags are combined with it).
     defaultOneShotModel: "kimi-code/kimi-for-coding",
-    buildOneShotCommand(model, _effort, prompt) {
+    buildOneShotCommand(model, _effort, prompt, location) {
       if (!prompt) return undefined;
       const args = ["-p", prompt];
       if (model) args.push("-m", model);
       args.push("--output-format", "text");
-      return { command: "kimi", args, stdin: "" };
+      return {
+        command: "kimi",
+        args,
+        stdin: "",
+        ...(location && profileHome ? { env: profileHome.envFor(location) } : {}),
+      };
     },
   };
 }

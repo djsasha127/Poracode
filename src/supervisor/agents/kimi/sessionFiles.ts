@@ -15,8 +15,8 @@ import { nativeKimiHomePath } from "./paths";
 // Honor the KIMI_CODE_HOME override the CLI supports (default ~/.kimi-code).
 // Sessions live under $KIMI_CODE_HOME/sessions/<workDirKey>/<sessionId>/. The
 // workDirKey encoding is opaque, so discovery scans every <workDirKey> dir.
-function getNativeKimiSessionsRoot(): string {
-  return join(nativeKimiHomePath(), "sessions");
+function getNativeKimiSessionsRoot(explicitHome?: string): string {
+  return join(explicitHome ?? nativeKimiHomePath(), "sessions");
 }
 
 // WSL: resolve the effective Kimi home inside the distro, honoring a
@@ -28,7 +28,11 @@ function getNativeKimiSessionsRoot(): string {
 // so repeated discovery/watch calls don't re-query.
 const wslKimiHomeCache = new Map<string, string>();
 
-async function resolveWslKimiHomeAsync(distro: string): Promise<string | null> {
+async function resolveWslKimiHomeAsync(
+  distro: string,
+  explicitHome?: string,
+): Promise<string | null> {
+  if (explicitHome) return explicitHome;
   const cached = wslKimiHomeCache.get(distro);
   if (cached) return cached;
   const [r] = await batchWslCommandsAsync(distro, [
@@ -44,29 +48,33 @@ async function resolveWslKimiHomeAsync(distro: string): Promise<string | null> {
 // override once it has been cached by discovery, otherwise the default
 // ~/.kimi-code built from the shared WSL home cache (primed during detection).
 // Discovery itself always uses the async form so the override is honored.
-function getSyncWslKimiHome(distro: string): string | null {
+function getSyncWslKimiHome(distro: string, explicitHome?: string): string | null {
+  if (explicitHome) return explicitHome;
   const cached = wslKimiHomeCache.get(distro);
   if (cached) return cached;
   const home = getCachedWslHomeDirectory(distro);
   return home ? `${home}/.kimi-code` : null;
 }
 
-function getKimiSessionsRoot(location: ProjectLocation): string | null {
+function getKimiSessionsRoot(location: ProjectLocation, explicitHome?: string): string | null {
   if (location.kind === "wsl") {
-    const home = getSyncWslKimiHome(location.distro);
+    const home = getSyncWslKimiHome(location.distro, explicitHome);
     return home ? `${home}/sessions` : null;
   }
-  return getNativeKimiSessionsRoot();
+  return getNativeKimiSessionsRoot(explicitHome);
 }
 
-function getKimiHome(location: ProjectLocation): string | null {
-  if (location.kind === "wsl") return getSyncWslKimiHome(location.distro);
-  return nativeKimiHomePath();
+function getKimiHome(location: ProjectLocation, explicitHome?: string): string | null {
+  if (location.kind === "wsl") return getSyncWslKimiHome(location.distro, explicitHome);
+  return explicitHome ?? nativeKimiHomePath();
 }
 
-async function getKimiSessionsRootAsync(location: ProjectLocation): Promise<string | null> {
-  if (location.kind !== "wsl") return getKimiSessionsRoot(location);
-  const home = await resolveWslKimiHomeAsync(location.distro);
+async function getKimiSessionsRootAsync(
+  location: ProjectLocation,
+  explicitHome?: string,
+): Promise<string | null> {
+  if (location.kind !== "wsl") return getKimiSessionsRoot(location, explicitHome);
+  const home = await resolveWslKimiHomeAsync(location.distro, explicitHome);
   return home ? `${home}/sessions` : null;
 }
 
@@ -92,13 +100,16 @@ const preSpawnSnapshots = new Map<string, Set<string>>();
  * Sync on native platforms only; WSL discovery runs entirely post-spawn through
  * the in-distro bridge, so the snapshot is left empty for WSL launches.
  */
-export function snapshotKimiPreSpawnSessions(location: ProjectLocation): void {
+export function snapshotKimiPreSpawnSessions(
+  location: ProjectLocation,
+  explicitHome?: string,
+): void {
   const cwdKey = cwdOf(location);
   const ids = new Set<string>();
   preSpawnSnapshots.set(cwdKey, ids);
   if (location.kind === "wsl") return;
 
-  const root = getKimiSessionsRoot(location);
+  const root = getKimiSessionsRoot(location, explicitHome);
   if (!root || !existsSync(root)) return;
 
   try {
@@ -180,8 +191,9 @@ function normalizePathForCompare(p: string, location: ProjectLocation): string {
  */
 export async function discoverKimiSessionRef(
   location: ProjectLocation,
+  explicitHome?: string,
 ): Promise<SessionRef | undefined> {
-  const root = await getKimiSessionsRootAsync(location);
+  const root = await getKimiSessionsRootAsync(location, explicitHome);
   if (!root) return undefined;
 
   const cwdKey = cwdOf(location);
@@ -244,8 +256,9 @@ export async function discoverKimiSessionRef(
 export async function resolveKimiSessionDir(
   location: ProjectLocation,
   sessionId: string,
+  explicitHome?: string,
 ): Promise<string | undefined> {
-  const root = await getKimiSessionsRootAsync(location);
+  const root = await getKimiSessionsRootAsync(location, explicitHome);
   if (!root) return undefined;
   const workDirs = await listSessionDir(location, root);
   if (!workDirs) return undefined;
@@ -260,9 +273,11 @@ export async function resolveKimiSessionDir(
   return undefined;
 }
 
-export function makeKimiDiscoverSessionRef() {
+export function makeKimiDiscoverSessionRef(
+  resolveHome?: (location: ProjectLocation) => string | undefined,
+) {
   return async (location: ProjectLocation): Promise<SessionRef | undefined> => {
-    return discoverKimiSessionRef(location);
+    return discoverKimiSessionRef(location, resolveHome?.(location));
   };
 }
 
@@ -273,15 +288,20 @@ export function makeKimiDiscoverSessionRef() {
  * the watcher. Missing paths are dropped by the shared watch helper, so a fresh
  * install (no `.kimi-code` yet) is handled without throwing.
  */
-export function resolveKimiSessionsWatchPaths(location: ProjectLocation): string[] {
-  const root = getKimiSessionsRoot(location);
-  const home = getKimiHome(location);
+export function resolveKimiSessionsWatchPaths(
+  location: ProjectLocation,
+  explicitHome?: string,
+): string[] {
+  const root = getKimiSessionsRoot(location, explicitHome);
+  const home = getKimiHome(location, explicitHome);
   return [root ?? undefined, home ?? undefined].filter((p): p is string => Boolean(p));
 }
 
-export function makeKimiWatchSessionRef() {
+export function makeKimiWatchSessionRef(
+  resolveHome?: (location: ProjectLocation) => string | undefined,
+) {
   return (location: ProjectLocation, onChanged: () => void): (() => void) | undefined => {
-    const paths = resolveKimiSessionsWatchPaths(location);
+    const paths = resolveKimiSessionsWatchPaths(location, resolveHome?.(location));
     if (paths.length === 0) return undefined;
 
     const label = `kimi:${location.kind === "wsl" ? "wsl:" + location.distro : location.kind}`;

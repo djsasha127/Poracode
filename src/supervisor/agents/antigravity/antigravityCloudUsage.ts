@@ -32,8 +32,9 @@ function nonOkSnapshot(
   nowMs: number,
   status: UsageSnapshot["status"],
   error: string,
+  providerId = "antigravity",
 ): UsageSnapshot {
-  return { providerId: "antigravity", status, windows: [], fetchedAt: nowMs, error };
+  return { providerId, status, windows: [], fetchedAt: nowMs, error };
 }
 
 interface AccessTokenResult {
@@ -184,30 +185,50 @@ export async function collectAntigravityCloudUsage(
     return token.failure ?? nonOkSnapshot(nowMs, "error", "OAuth token refresh failed");
   }
 
+  const snapshot = await collectAntigravityCloudUsageWithAccessToken(
+    nowMs,
+    host,
+    token.accessToken,
+  );
+  if (snapshot.status === "auth-missing") cachedAccessToken = undefined;
+  return snapshot;
+}
+
+/** Fetch quota with an access token owned by an isolated Antigravity CLI profile. */
+export async function collectAntigravityCloudUsageWithAccessToken(
+  nowMs: number,
+  host: HostPort,
+  accessToken: string,
+  providerId = "antigravity",
+): Promise<UsageSnapshot> {
   let lastStatus: number | undefined;
   for (const baseUrl of CLOUD_CODE_BASE_URLS) {
     let response: HttpResponse;
     try {
-      response = await cloudCodePost(host, baseUrl, QUOTA_SUMMARY_PATH, token.accessToken);
+      response = await cloudCodePost(host, baseUrl, QUOTA_SUMMARY_PATH, accessToken);
     } catch {
       continue;
     }
     lastStatus = response.status;
     if (response.status === 401 || response.status === 403) {
-      cachedAccessToken = undefined;
-      return nonOkSnapshot(nowMs, "auth-missing", `Cloud Code token rejected (${response.status})`);
+      return nonOkSnapshot(
+        nowMs,
+        "auth-missing",
+        `Cloud Code token rejected (${response.status})`,
+        providerId,
+      );
     }
     if (response.status === 429) {
-      return nonOkSnapshot(nowMs, "rate-limited", "Cloud Code rate limited");
+      return nonOkSnapshot(nowMs, "rate-limited", "Cloud Code rate limited", providerId);
     }
     if (response.status < 200 || response.status >= 300) continue;
 
     try {
       const windows = antigravityQuotaSummaryWindows(JSON.parse(response.body));
       if (windows.length === 0) continue;
-      const plan = await loadPlan(host, token.accessToken, baseUrl);
+      const plan = await loadPlan(host, accessToken, baseUrl);
       return {
-        providerId: "antigravity",
+        providerId,
         status: "ok",
         windows,
         fetchedAt: nowMs,
@@ -224,7 +245,7 @@ export async function collectAntigravityCloudUsage(
       : lastStatus >= 200 && lastStatus < 300
         ? "Cloud Code quota summary returned no windows"
         : `Cloud Code quota HTTP ${lastStatus}`;
-  return nonOkSnapshot(nowMs, "error", error);
+  return nonOkSnapshot(nowMs, "error", error, providerId);
 }
 
 /** Clear process-local OAuth state between deterministic tests. */

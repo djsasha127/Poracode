@@ -19,6 +19,7 @@ import { buildPromptContentBlocks, hasSendablePromptContent } from "@/shared/pro
 import { titlePromptFromSegments } from "@/shared/threadTitle";
 import { captureThreadPromptSubmitted, captureThreadStarted } from "@/renderer/analytics/posthog";
 import { readBridge } from "@/renderer/bridge";
+import { resolveAgentLaunchRoute } from "@/renderer/components/providers/launchRouting";
 import type { DraftStartInput } from "@/renderer/components/thread/ThreadDraftComposerArea";
 import { i18n } from "@/renderer/i18n/i18n";
 import { useAgentStatusesStore } from "@/renderer/state/agentStatusesStore";
@@ -37,6 +38,7 @@ import { isRemoteProjectUnreachable } from "@/renderer/state/remoteServers/reach
 import type { PendingLaunchProviderSwitch } from "@/renderer/state/slices/launchSlice";
 import { useRemoteServersStore } from "@/renderer/state/remoteServersStore";
 import type { RemoteThreadLaunchResult } from "@/renderer/state/remoteServers/types";
+import { useProviderUsageStore } from "@/renderer/state/providerUsageStore";
 import { useSharedSettings } from "@/renderer/state/sharedSettingsStore";
 import { getActiveWorkspaceId } from "@/renderer/state/workspaceStore";
 import { generateTitleAsync } from "@/renderer/utils/titleGen";
@@ -192,7 +194,7 @@ export async function startThreadFromDraft(
   options: { replacePaneId?: string; preserveActiveGroup?: boolean } = {},
 ): Promise<void> {
   const {
-    agentKind,
+    agentKind: requestedAgentKind,
     config,
     prompt,
     segments,
@@ -216,6 +218,30 @@ export async function startThreadFromDraft(
   const isHomeScope = isHomeProject(project);
   const owner = remoteOwner(project);
   const host = threadLaunchHost(project);
+  const statusState = useAgentStatusesStore.getState();
+  const projectStatuses = getProjectAgentStatuses(
+    project.location,
+    statusState.agentStatuses,
+    statusState.wslAgentStatuses,
+  );
+  const remoteUsage = owner
+    ? (useRemoteServersStore.getState().runtime[owner.desktopId]?.providerUsage?.snapshots ?? [])
+    : [];
+  const usageSnapshots = owner
+    ? Object.fromEntries(remoteUsage.map((snapshot) => [snapshot.providerId, snapshot]))
+    : useProviderUsageStore.getState().snapshots;
+  const route = resolveAgentLaunchRoute({
+    agentKind: requestedAgentKind,
+    config,
+    ...(presentationMode ? { presentationMode } : {}),
+    instances: Object.values(useSharedSettings.getState().agentInstances ?? {}),
+    statuses: projectStatuses,
+    snapshots: usageSnapshots,
+  });
+  const agentKind = route.agentKind;
+  if (route.switchedFrom && route.label) {
+    toast.warning(i18n._(msg`Antigravity quota is exhausted. Starting with ${route.label}.`));
+  }
 
   useAppStore.getState().updateProjectDraftConfig(
     project.id,

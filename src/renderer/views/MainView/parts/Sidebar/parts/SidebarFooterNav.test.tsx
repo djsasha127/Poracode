@@ -50,11 +50,22 @@ describe("SidebarFooterNav", () => {
 
     expect(screen.queryByText("Pull requests")).not.toBeInTheDocument();
     expect(screen.queryByText("What's New")).not.toBeInTheDocument();
-    expect(screen.getByText("Schedules")).toBeInTheDocument();
+    expect(screen.getByText("Remote Environments")).toBeInTheDocument();
     expect(screen.getByText("Settings")).toBeInTheDocument();
     expect(screen.getByText("Hide sidebar")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Collapse footer" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Expand footer" })).not.toBeInTheDocument();
+  });
+
+  it("opens Remote Environments from the former schedules shortcut", () => {
+    render(<SidebarFooterNav remoteAccessStatus="off" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remote Environments" }));
+
+    expect(usePanelStore.getState()).toMatchObject({
+      settingsOpen: true,
+      settingsSection: "remoteServers",
+    });
   });
 
   it("collapses to an icon row and back via the toggle", () => {
@@ -69,7 +80,7 @@ describe("SidebarFooterNav", () => {
     expect(screen.queryByText("Hide sidebar")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pull requests" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "What's New" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Schedules" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remote Environments" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remote Access" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeInTheDocument();
@@ -138,7 +149,7 @@ describe("SidebarFooterNav", () => {
       const menu = await screen.findByRole("menu");
       expect(menu).toBeInTheDocument();
       expect(screen.queryByRole("menuitem", { name: "Pull requests" })).not.toBeInTheDocument();
-      expect(screen.getByRole("menuitem", { name: "Schedules" })).toBeInTheDocument();
+      expect(screen.getByRole("menuitem", { name: "Remote Environments" })).toBeInTheDocument();
       expect(screen.getByRole("menuitem", { name: "Remote Access" })).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole("menuitem", { name: "Settings" }));

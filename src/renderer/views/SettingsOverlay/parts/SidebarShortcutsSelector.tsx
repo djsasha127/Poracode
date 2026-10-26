@@ -1,7 +1,7 @@
 import { DragDropProvider, type DragEndEvent } from "@dnd-kit/react";
 import { isSortable, useSortable } from "@dnd-kit/react/sortable";
 import { Button, Popover } from "@heroui/react";
-import { CalendarClock, Check, GripVertical, Workflow } from "lucide-react";
+import { Check, GripVertical, Server, Workflow } from "lucide-react";
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { SidebarShortcutId } from "@/shared/settings";
 import { useSharedSettings } from "@/renderer/state/sharedSettingsStore";
@@ -85,8 +85,8 @@ export function SidebarShortcutsSelector() {
       "schedules",
       {
         id: "schedules",
-        label: t`Schedules`,
-        icon: <CalendarClock className="size-3.5" />,
+        label: t`Remote Environments`,
+        icon: <Server className="size-3.5" />,
       },
     ],
   ]);

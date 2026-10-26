@@ -50,9 +50,9 @@ describe("GeneralSettings", () => {
 
     expect(screen.queryByRole("option", { name: /Pull requests/ })).not.toBeInTheDocument();
     const githubActions = screen.getByRole("option", { name: /GitHub Actions/ });
-    const schedules = screen.getByRole("option", { name: /Schedules/ });
+    const remoteEnvironments = screen.getByRole("option", { name: /Remote Environments/ });
     expect(githubActions).toHaveAttribute("aria-selected", "false");
-    expect(schedules).toHaveAttribute("aria-selected", "true");
+    expect(remoteEnvironments).toHaveAttribute("aria-selected", "true");
     expect(screen.getAllByRole("button", { name: /Reorder/ })).toHaveLength(2);
 
     fireEvent.click(githubActions);

@@ -13,6 +13,11 @@ import { isMac, isWindows, readBridge } from "@/renderer/bridge";
 import { ClaudeAgentSettingsPanel, claudeProfileSupport } from "./ClaudeProfileSettings";
 import { CodexAgentSettingsPanel, codexProfileSupport } from "./CodexProfileSettings";
 import { cursorProfileSupport } from "./CursorProfileSettings";
+import {
+  AntigravityAgentSettingsPanel,
+  antigravityProfileSupport,
+} from "./AntigravityProfileSettings";
+import { KimiAgentSettingsPanel, kimiProfileSupport } from "./KimiProfileSettings";
 import { CursorProviderSettings } from "./CursorProviderSettings";
 import { OpenCode2ProviderSettings } from "./OpenCode2ProviderSettings";
 import { OpenCodeProviderSettings } from "./OpenCodeProviderSettings";
@@ -144,7 +149,10 @@ export interface NativeAgentRegistryEntry {
    * behind its language server). Called when the agent's settings page opens;
    * resolving `undefined` hides the account line.
    */
-  accountResolver?: (wslDistros: string[]) => Promise<AgentProviderMetadata | undefined>;
+  accountResolver?: (
+    wslDistros: string[],
+    agentKind: string,
+  ) => Promise<AgentProviderMetadata | undefined>;
   /**
    * The provider keeps several profiles (extra accounts or configurations),
    * listed on its base settings page and reachable as `<driver>:<id>` agent
@@ -314,6 +322,8 @@ export const NATIVE_AGENT_REGISTRY_ENTRIES: NativeAgentRegistryEntry[] = [
           "else printf 'curl is required to install Kimi Code. Install curl, then refresh detected agents.\\n'; fi",
         "if (Get-Command irm -ErrorAction SilentlyContinue) { irm https://code.kimi.com/kimi-code/install.ps1 | iex } else { Write-Host 'No supported installer found. Install PowerShell Invoke-RestMethod first, then refresh detected agents.' }",
       ),
+    settingsPanel: KimiAgentSettingsPanel,
+    profiles: kimiProfileSupport,
   },
   {
     id: "muse",
@@ -353,10 +363,12 @@ export const NATIVE_AGENT_REGISTRY_ENTRIES: NativeAgentRegistryEntry[] = [
     runtimeSlots: antigravityRuntimeSlots,
     // Antigravity's signed-in account lives behind its language server (the
     // credential sits in the OS keyring), so it isn't in the detected status.
-    accountResolver: (wslDistros) =>
+    accountResolver: (wslDistros, agentKind) =>
       readBridge()
-        .resolveAgentAccount({ agentKind: "antigravity", wslDistros })
+        .resolveAgentAccount({ agentKind, wslDistros })
         .then((result) => result.account),
+    settingsPanel: AntigravityAgentSettingsPanel,
+    profiles: antigravityProfileSupport,
   },
   {
     id: "commandcode",

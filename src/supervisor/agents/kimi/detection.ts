@@ -6,6 +6,7 @@ import { probeAcpCapabilities, type AcpProbeResult } from "../acp";
 import {
   batchWslCommandsAsync,
   buildAgentCommand,
+  buildPosixExportPrefix,
   type CapabilitiesProbeResult,
   type DetectionSpec,
   quotePosixShellArg,
@@ -50,8 +51,13 @@ export const kimiDefaultCapabilities: AgentCapability = {
   settingDefs: [],
 };
 
-export function buildKimiCommand(location: ProjectLocation, args: string[], wslExecPath?: string) {
-  return buildAgentCommand(location, "kimi", args, wslExecPath);
+export function buildKimiCommand(
+  location: ProjectLocation,
+  args: string[],
+  wslExecPath?: string,
+  env?: Record<string, string>,
+) {
+  return buildAgentCommand(location, "kimi", args, wslExecPath, env);
 }
 
 // 0.33.0's agent-core-v2 ACP server no longer drives the OAuth device flow
@@ -163,8 +169,9 @@ async function probeCapabilities(
   location: ProjectLocation,
   executablePath?: string,
   signal?: AbortSignal,
+  env?: Record<string, string>,
 ): Promise<CapabilitiesProbeResult> {
-  const spec = buildKimiCommand(location, ["acp"], executablePath);
+  const spec = buildKimiCommand(location, ["acp"], executablePath, env);
   const sessionCwd = getAgentProbeCwd(location);
   const processCwd = resolveProbeSpawnCwd(location, spec.cwd);
   // `session/new` is what decides `authState`, models and modes, so the probe
@@ -173,8 +180,8 @@ async function probeCapabilities(
   // elsewhere) rather than the project path a launch would use.
   // Only the ACP probe depends on the trust marker, so read the credential
   // files (another WSL round trip) alongside the marker write instead of after.
-  const credentialStatePromise = readKimiCredentialState(location);
-  await ensureKimiWorkspaceTrust(location, sessionCwd);
+  const credentialStatePromise = readKimiCredentialState(location, env);
+  await ensureKimiWorkspaceTrust(location, sessionCwd, env);
   // No `authenticateMethodIds`: on the legacy engine `authenticate` triggers
   // the interactive OAuth device flow, and on 0.33.0's v2 server it only
   // re-validates — probing must never invoke either.
@@ -242,16 +249,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function readKimiCredentialState(location: ProjectLocation): Promise<{
+async function readKimiCredentialState(
+  location: ProjectLocation,
+  env?: Record<string, string>,
+): Promise<{
   hasAnyCredential: boolean;
   hasManagedOAuthCredential: boolean;
 }> {
   if (location.kind !== "wsl") {
     const [hasConfigCredential, hasManagedOAuthCredential] = await Promise.all([
-      readFile(join(nativeKimiHomePath(), "config.toml"), "utf8")
+      readFile(join(nativeKimiHomePath(env), "config.toml"), "utf8")
         .then(hasKimiCredential)
         .catch(() => false),
-      readFile(nativeKimiOAuthCredentialPath(), "utf8")
+      readFile(nativeKimiOAuthCredentialPath(env), "utf8")
         .then(hasKimiOAuthCredential)
         .catch(() => false),
     ]);
@@ -260,9 +270,10 @@ async function readKimiCredentialState(location: ProjectLocation): Promise<{
       hasManagedOAuthCredential,
     };
   }
+  const prefix = buildPosixExportPrefix(env);
   const [configResult, oauthResult] = await batchWslCommandsAsync(location.distro, [
-    'cat "${KIMI_CODE_HOME:-$HOME/.kimi-code}/config.toml" 2>/dev/null || true',
-    'cat "${KIMI_CODE_HOME:-$HOME/.kimi-code}/credentials/kimi-code.json" 2>/dev/null || true',
+    `${prefix}cat "\${KIMI_CODE_HOME:-$HOME/.kimi-code}/config.toml" 2>/dev/null || true`,
+    `${prefix}cat "\${KIMI_CODE_HOME:-$HOME/.kimi-code}/credentials/kimi-code.json" 2>/dev/null || true`,
   ]);
   const hasConfigCredential = configResult?.ok ? hasKimiCredential(configResult.stdout) : false;
   const hasManagedOAuthCredential = oauthResult?.ok
@@ -320,6 +331,6 @@ export const kimiDetectionSpec: DetectionSpec = {
   },
   async capabilitiesProbe(ctx) {
     if (!ctx.executablePath) return undefined;
-    return probeCapabilities(ctx.location, ctx.executablePath, ctx.signal);
+    return probeCapabilities(ctx.location, ctx.executablePath, ctx.signal, ctx.probeEnv);
   },
 };

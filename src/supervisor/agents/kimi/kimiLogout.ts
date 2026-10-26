@@ -18,7 +18,7 @@ import { nativeKimiOAuthCredentialPath } from "./paths";
  * itself, which meant merely asking the adapter for its logout spec signed the
  * user out — a unit test doing exactly that wiped a real session.
  */
-export function buildKimiLogoutCommand(ctx?: AgentEnvContext) {
+export function buildKimiLogoutCommand(ctx?: AgentEnvContext, env?: Record<string, string>) {
   const location = detectProbeLocation(ctx);
   if (location.kind === "windows") {
     return {
@@ -28,7 +28,7 @@ export function buildKimiLogoutCommand(ctx?: AgentEnvContext) {
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        `Remove-Item -LiteralPath ${quotePowerShellLiteral(nativeKimiOAuthCredentialPath())} -Force -ErrorAction SilentlyContinue`,
+        `Remove-Item -LiteralPath ${quotePowerShellLiteral(nativeKimiOAuthCredentialPath(env))} -Force -ErrorAction SilentlyContinue`,
       ],
       cwd: location.path,
     };
@@ -37,5 +37,6 @@ export function buildKimiLogoutCommand(ctx?: AgentEnvContext) {
     location,
     ["-c", 'rm -f -- "${KIMI_CODE_HOME:-$HOME/.kimi-code}/credentials/kimi-code.json"'],
     "sh",
+    env,
   );
 }

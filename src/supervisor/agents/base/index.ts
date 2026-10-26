@@ -834,6 +834,7 @@ export async function detectAgentInstall(
     executablePath,
     version,
     ...(ctx?.agentSettings ? { agentSettings: ctx.agentSettings } : {}),
+    ...(probeEnv ? { probeEnv } : {}),
     ...(ctx?.signal ? { signal: ctx.signal } : {}),
   };
 

@@ -25,6 +25,8 @@ export type AgentDriverKind = z.infer<typeof agentDriverKindSchema>;
 export const CLAUDE_PROFILE_KIND_PREFIX = "claude:";
 export const CODEX_PROFILE_KIND_PREFIX = "codex:";
 export const CURSOR_PROFILE_KIND_PREFIX = "cursor:";
+export const ANTIGRAVITY_PROFILE_KIND_PREFIX = "antigravity:";
+export const KIMI_PROFILE_KIND_PREFIX = "kimi:";
 
 export const agentInstanceIdSchema = z
   .string()
@@ -218,6 +220,31 @@ export function parseCodexProfileInstanceConfig(value: unknown): CodexProfileIns
   return codexProfileInstanceConfigSchema.parse(value ?? {});
 }
 
+// ── CLI-home profile driver configs ────────────────────────────────────────
+
+/**
+ * Antigravity and Kimi both isolate an account by pointing the CLI at a
+ * dedicated home. Keep the persisted shape identical while retaining
+ * provider-specific parsers so adapters never import another provider's
+ * contract.
+ */
+export const cliHomeProfileInstanceConfigSchema = z.object({
+  homeDir: z.string().min(1),
+});
+export type CliHomeProfileInstanceConfig = z.infer<typeof cliHomeProfileInstanceConfigSchema>;
+
+export type AntigravityProfileInstanceConfig = CliHomeProfileInstanceConfig;
+export function parseAntigravityProfileInstanceConfig(
+  value: unknown,
+): AntigravityProfileInstanceConfig {
+  return cliHomeProfileInstanceConfigSchema.parse(value ?? {});
+}
+
+export type KimiProfileInstanceConfig = CliHomeProfileInstanceConfig;
+export function parseKimiProfileInstanceConfig(value: unknown): KimiProfileInstanceConfig {
+  return cliHomeProfileInstanceConfigSchema.parse(value ?? {});
+}
+
 // Profile payload schemas are provider-agnostic and live in `agentProfiles.ts`
 // (`setProfileEnvironment`, `createProfile`). The per-provider helpers below are
 // only naming sugar over the shared `<driver>:<id>` kind shape.
@@ -256,6 +283,22 @@ export function isCursorProfileKind(kind: string): boolean {
 
 export function extractCursorProfileInstanceId(kind: string): string | undefined {
   return kindInstanceId(kind, CURSOR_PROFILE_KIND_PREFIX);
+}
+
+export function antigravityProfileKind(instanceId: string): AgentDriverKind {
+  return prefixedKind(ANTIGRAVITY_PROFILE_KIND_PREFIX, instanceId);
+}
+
+export function extractAntigravityProfileInstanceId(kind: string): string | undefined {
+  return kindInstanceId(kind, ANTIGRAVITY_PROFILE_KIND_PREFIX);
+}
+
+export function kimiProfileKind(instanceId: string): AgentDriverKind {
+  return prefixedKind(KIMI_PROFILE_KIND_PREFIX, instanceId);
+}
+
+export function extractKimiProfileInstanceId(kind: string): string | undefined {
+  return kindInstanceId(kind, KIMI_PROFILE_KIND_PREFIX);
 }
 
 /**

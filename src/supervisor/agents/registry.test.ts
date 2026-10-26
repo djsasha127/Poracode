@@ -162,6 +162,21 @@ describe("profile agent registry", () => {
     expect(adapters.find((adapter) => adapter.kind === "codex")).toBeDefined();
   });
 
+  it.each([
+    ["antigravity", "Antigravity Work", "~/.poracode/antigravity-profiles/work", "agy"],
+    ["kimi", "Kimi Work", "~/.poracode/kimi-profiles/work", "kimi"],
+  ] as const)("registers isolated %s profiles", (driver, label, homeDir, binary) => {
+    const adapters = buildAgentRegistry([
+      { id: "work", driver, displayName: "Work", config: { homeDir } },
+    ]);
+
+    expect(adapters.find((adapter) => adapter.kind === `${driver}:work`)).toMatchObject({
+      label,
+      binary,
+    });
+    expect(adapters.find((adapter) => adapter.kind === driver)).toBeDefined();
+  });
+
   it("skips a Codex profile whose config is invalid instead of failing the registry", () => {
     const adapters = buildAgentRegistry([
       { id: "broken", driver: "codex", displayName: "Broken", config: {} },

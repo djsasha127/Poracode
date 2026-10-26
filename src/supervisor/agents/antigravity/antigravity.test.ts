@@ -5,7 +5,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type { McpServer, ProjectLocation, ThreadConfig } from "@/shared/contracts";
 import { EXTRACTION_PROMPT } from "@/supervisor/contextExtractor";
-import { createAntigravityAdapter, shouldUseAntigravityPrintPty } from ".";
+import {
+  createAntigravityAdapter,
+  createAntigravityProfileAdapter,
+  shouldUseAntigravityPrintPty,
+} from ".";
 import { resolveSubagentExecution } from "@/supervisor/crossagentMcp/types";
 import { detectAgentInstall } from "../base";
 import { buildAntigravityArgs } from "./argv";
@@ -474,6 +478,45 @@ describe("createAntigravityAdapter", () => {
       ).toBe("--new-project");
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("createAntigravityProfileAdapter", () => {
+  it("isolates OAuth, conversations, and one-shots under the profile HOME", () => {
+    const home = mkdtempSync(join(tmpdir(), "poracode-antigravity-profile-"));
+    try {
+      const adapter = createAntigravityProfileAdapter({
+        id: "work",
+        driver: "antigravity",
+        displayName: "Work",
+        config: { homeDir: home },
+      });
+      const launch = adapter.buildLaunchArgv(
+        { kind: "posix", path: home },
+        { model: ANTIGRAVITY_DEFAULT_MODEL_ID },
+        "hello",
+      );
+      const oneShot = adapter.buildOneShotCommand?.(
+        ANTIGRAVITY_DEFAULT_MODEL_ID,
+        "Medium",
+        "summarize",
+        { kind: "posix", path: home },
+      );
+
+      expect(adapter.kind).toBe("antigravity:work");
+      expect(adapter.label).toBe("Antigravity Work");
+      expect(adapter.firstClassAcpRegistryId).toBeUndefined();
+      expect(adapter.capabilities.presentationModes).toEqual(["terminal"]);
+      expect(launch.env).toMatchObject({
+        HOME: home,
+        GEMINI_API_KEY: "",
+        GOOGLE_API_KEY: "",
+        GOOGLE_APPLICATION_CREDENTIALS: "",
+      });
+      expect(oneShot?.env).toMatchObject({ HOME: home });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

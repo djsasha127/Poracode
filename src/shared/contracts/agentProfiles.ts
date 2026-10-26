@@ -40,6 +40,8 @@ export const AGENT_PROFILE_DRIVERS: readonly AgentProfileDriver[] = [
   { driver: "claude" },
   { driver: "codex" },
   { driver: "cursor", credentialEnvVar: "CURSOR_API_KEY" },
+  { driver: "antigravity" },
+  { driver: "kimi" },
 ];
 
 const BY_DRIVER = new Map(AGENT_PROFILE_DRIVERS.map((entry) => [entry.driver, entry]));

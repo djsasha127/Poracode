@@ -263,7 +263,7 @@ export function SingleAgentSettings(props: {
       return;
     }
     let cancelled = false;
-    accountResolver(wslDistros)
+    accountResolver(wslDistros, props.agentKind)
       .then((account) => {
         if (!cancelled) setProviderAccount(account);
       })
@@ -272,7 +272,7 @@ export function SingleAgentSettings(props: {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountResolver, wslProjectDistrosKey]);
+  }, [accountResolver, props.agentKind, wslProjectDistrosKey]);
 
   if (!agent) {
     // A profile whose base provider is not installed here — or whose detection
