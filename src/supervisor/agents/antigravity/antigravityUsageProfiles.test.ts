@@ -234,6 +234,7 @@ describe("Antigravity profile usage", () => {
       expect(snapshot).toMatchObject({ providerId: "antigravity:donor", status: "ok" });
       expect(authorizations).toEqual([
         "Bearer rejected-access-token",
+        "Bearer rejected-access-token",
         "Bearer refreshed-access-token",
       ]);
     } finally {
